@@ -77,7 +77,7 @@ pub fn writeModuleId(comptime Writer: type, writer: Writer, module_id: u32) void
     std.fmt.formatInt(module_id, 16, .lower, .{}, writer) catch unreachable;
 }
 
-pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, comptime prefers_ascii: bool) bool {
+pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, prefers_ascii: bool) bool {
     if (c <= last_ascii) {
         return c >= first_ascii and c != '\\' and c != '"' and c != '\'' and c != '`' and c != '$';
     } else {
@@ -202,7 +202,7 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime prefers_a
     return bytes;
 }
 
-pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime prefers_ascii: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
+pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, prefers_ascii: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
     const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
     var i: usize = 0;
     const n: usize = text.len;
@@ -666,7 +666,6 @@ const ImportVariant = enum {
 };
 
 fn NewPrinter(
-    comptime prefers_ascii: bool,
     comptime Writer: type,
     comptime rewrite_esm_to_cjs: bool,
     comptime is_bun_platform: bool,
@@ -688,6 +687,7 @@ fn NewPrinter(
         prev_reg_exp_end: i32 = -1,
         call_target: ?Expr.Data = null,
         writer: Writer,
+        prefers_ascii: bool,
 
         has_printed_bundled_import_statement: bool = false,
         imported_module_ids: std.ArrayList(u32),
@@ -1588,9 +1588,9 @@ fn NewPrinter(
         pub fn printStringCharactersUTF8(e: *Printer, text: []const u8, quote: u8) void {
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', prefers_ascii, false, .utf8),
-                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', prefers_ascii, false, .utf8),
-                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', prefers_ascii, false, .utf8),
+                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', e.prefers_ascii, false, .utf8),
+                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', e.prefers_ascii, false, .utf8),
+                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', e.prefers_ascii, false, .utf8),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
@@ -1599,9 +1599,9 @@ fn NewPrinter(
 
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', prefers_ascii, false, .utf16),
-                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', prefers_ascii, false, .utf16),
-                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', prefers_ascii, false, .utf16),
+                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', e.prefers_ascii, false, .utf16),
+                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', e.prefers_ascii, false, .utf16),
+                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', e.prefers_ascii, false, .utf16),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
@@ -1954,8 +1954,8 @@ fn NewPrinter(
             }
         }
 
-        pub inline fn canPrintIdentifierUTF16(_: *Printer, name: []const u16) bool {
-            if (comptime prefers_ascii) {
+        pub inline fn canPrintIdentifierUTF16(p: *Printer, name: []const u16) bool {
+            if (p.prefers_ascii) {
                 return js_lexer.isLatin1Identifier([]const u16, name);
             } else {
                 return js_lexer.isIdentifierUTF16(name);
@@ -2709,7 +2709,10 @@ fn NewPrinter(
 
                     p.print("`");
                     switch (e.head) {
-                        .raw => |raw| p.print(raw),
+                        .raw => |raw| {
+                            if (p.prefers_ascii and !strings.isAllASCII(raw)) p.prefers_ascii = false;
+                            p.print(raw);
+                        },
                         .cooked => |*cooked| {
                             if (cooked.isPresent()) {
                                 cooked.resolveRopeIfNeeded(p.options.allocator);
@@ -2723,7 +2726,10 @@ fn NewPrinter(
                         p.printExpr(part.value, .lowest, ExprFlag.None());
                         p.print("}");
                         switch (part.tail) {
-                            .raw => |raw| p.print(raw),
+                            .raw => |raw| {
+                                if (p.prefers_ascii and !strings.isAllASCII(raw)) p.prefers_ascii = false;
+                                p.print(raw);
+                            },
                             .cooked => |*cooked| {
                                 if (cooked.isPresent()) {
                                     cooked.resolveRopeIfNeeded(p.options.allocator);
@@ -4966,7 +4972,7 @@ fn NewPrinter(
         }
 
         pub fn printIdentifier(p: *Printer, identifier: string) void {
-            if (comptime prefers_ascii) {
+            if (p.prefers_ascii) {
                 p.printIdentifierAsciiOnly(identifier);
             } else {
                 p.print(identifier);
@@ -5018,7 +5024,7 @@ fn NewPrinter(
                     i += 1;
                 }
 
-                if ((comptime prefers_ascii) and c > last_ascii) {
+                if (p.prefers_ascii and c > last_ascii) {
                     switch (c) {
                         0...0xFFFF => {
                             p.print(
@@ -5141,6 +5147,7 @@ fn NewPrinter(
             opts: Options,
             renamer: bun.renamer.Renamer,
             source_map_builder: SourceMap.Chunk.Builder,
+            prefers_ascii: bool,
         ) Printer {
             if (imported_module_ids_list_unset) {
                 imported_module_ids_list = std.ArrayList(u32).init(default_allocator);
@@ -5156,6 +5163,7 @@ fn NewPrinter(
                 .imported_module_ids = imported_module_ids_list,
                 .renamer = renamer,
                 .source_map_builder = source_map_builder,
+                .prefers_ascii = prefers_ascii,
             };
             if (comptime generate_source_map) {
                 // This seems silly to cache but the .items() function apparently costs 1ms according to Instruments.
@@ -5715,7 +5723,6 @@ pub fn printAst(
     }
 
     const PrinterType = NewPrinter(
-        is_bun_platform,
         Writer,
         false,
         is_bun_platform,
@@ -5730,6 +5737,7 @@ pub fn printAst(
         opts,
         renamer,
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, is_bun_platform, opts, source, &tree),
+        is_bun_platform,
     );
     defer {
         if (comptime generate_source_map) {
@@ -5793,7 +5801,7 @@ pub fn printJSON(
     source: *const logger.Source,
     opts: Options,
 ) !usize {
-    const PrinterType = NewPrinter(false, Writer, false, false, true, false);
+    const PrinterType = NewPrinter(Writer, false, false, true, false);
     const writer = _writer;
     var s_expr = S.SExpr{ .value = expr };
     const stmt = Stmt{ .loc = logger.Loc.Empty, .data = .{
@@ -5812,6 +5820,7 @@ pub fn printJSON(
         opts,
         renamer.toRenamer(),
         undefined,
+        false,
     );
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
@@ -5903,8 +5912,6 @@ pub fn printWithWriterAndPlatform(
     bun.crash_handler.current_action = .{ .print = source.path.text };
 
     const PrinterType = NewPrinter(
-        // if it's bun, it also prefers ascii
-        is_bun_platform,
         Writer,
         false,
         is_bun_platform,
@@ -5918,6 +5925,7 @@ pub fn printWithWriterAndPlatform(
         opts,
         renamer,
         getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
+        is_bun_platform,
     );
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
@@ -5988,7 +5996,7 @@ pub fn printCommonJS(
     defer bun.crash_handler.current_action = prev_action;
     bun.crash_handler.current_action = .{ .print = source.path.text };
 
-    const PrinterType = NewPrinter(prefers_ascii, Writer, true, false, false, generate_source_map);
+    const PrinterType = NewPrinter(Writer, true, false, false, generate_source_map);
     const writer = _writer;
     var renamer = rename.NoOpRenamer.init(symbols, source);
     var printer = PrinterType.init(
@@ -5997,6 +6005,7 @@ pub fn printCommonJS(
         opts,
         renamer.toRenamer(),
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, false, opts, source, &tree),
+        prefers_ascii,
     );
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
