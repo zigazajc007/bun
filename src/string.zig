@@ -431,6 +431,14 @@ pub const String = extern struct {
         return BunString__fromBytes(bytes.ptr, bytes.len);
     }
 
+    pub fn createLatin1OrUTF8(bytes: []const u8) String {
+        if (bun.strings.isAllASCII(bytes)) {
+            return String.createLatin1(bytes);
+        } else {
+            return String.createUTF8(bytes);
+        }
+    }
+
     pub fn createUTF16(bytes: []const u16) String {
         if (bytes.len == 0) return String.empty;
         if (bun.strings.firstNonASCII16([]const u16, bytes) == null) {

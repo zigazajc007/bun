@@ -86,6 +86,15 @@ const templateStringTests: Record<string, TemplateStringTest> = {
   StringAddition4: { expr: "`${1}z` + `\u2796${Number(1)}rest`", print: true },
   StringAddition5: { expr: "`\u2796${1}z` + `\u2796${Number(1)}rest`", print: true },
   StringAddition6: { expr: "`${1}` + '\u2796rest'", print: true },
+  TaggedTemplate1: { expr: "String.raw`one${'two'}three${'four'}`", print: true },
+  TaggedTemplate2: { expr: "String.raw`abc`", print: true },
+  TaggedTemplate3: { expr: "String.raw`\\n`", print: true },
+  TaggedTemplate4: { expr: "String.raw`\n`", print: true },
+  TaggedTemplate5: { expr: "String.raw`æ`", print: true },
+  TaggedTemplate6: { expr: "String.raw`\\xE6`", print: true },
+  TaggedTemplate7: { expr: 'String.raw`\xE6${"one"}`', print: true },
+  TaggedTemplate8: { expr: 'String.raw`\u{10334}${"two"}→`', print: true },
+  TaggedTemplate9: { expr: 'String.raw`\\u{10334}${"two"}→`', print: true },
 };
 
 describe("bundler", () => {
