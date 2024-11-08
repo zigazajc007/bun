@@ -637,6 +637,6 @@ pub const RuntimeTranspilerCache = struct {
             return;
         };
         if (comptime bun.Environment.allow_assert)
-            debug("put() = {d} bytes", .{output_code.latin1().len});
+            debug("put() = {d} bytes", .{output_code.length()});
     }
 };
