@@ -257,6 +257,7 @@ pub const Arguments = struct {
     const build_only_params = [_]ParamType{
         clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code") catch unreachable,
         clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
+        clap.parseParam("--package.json                   Generate a package.json of dependencies used in entrypoints") catch unreachable,
         clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
         clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
         clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
@@ -823,6 +824,11 @@ pub const Arguments = struct {
                     Output.prettyErrorln("<r><red>error<r>: Invalid packages setting: \"{s}\"", .{packages});
                     Global.crash();
                 }
+            }
+
+            if (args.flag("--package.json")) {
+                opts.package_json = true;
+                opts.packages = .external;
             }
 
             const TargetMatcher = strings.ExactSizeMatcher(8);

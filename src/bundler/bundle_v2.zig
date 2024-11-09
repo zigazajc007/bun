@@ -1331,6 +1331,209 @@ pub const BundleV2 = struct {
         return @intCast(source_index);
     }
 
+    pub fn generatePackageJSON(this: *BundleV2, allocator: std.mem.Allocator, reachable_files: []const Index) !std.ArrayList(options.OutputFile) {
+        var output_files = std.ArrayList(options.OutputFile).init(allocator);
+
+        // Find all external dependencies from reachable files
+        var external_deps = bun.StringHashMap(void).init(allocator);
+        defer external_deps.deinit();
+
+        const import_records = this.graph.ast.items(.import_records);
+
+        for (reachable_files) |source_index| {
+            const records: []const ImportRecord = import_records[source_index.get()].slice();
+            for (records) |record| {
+                if (!record.source_index.isValid() and record.tag == .none) {
+                    // External dependency
+                    if (record.path.text.len > 0) {
+                        var package_path: []const u8 = "";
+                        if (record.path.text[0] == '@') {
+                            if (strings.indexOfChar(record.path.text, '/')) |slash_index| {
+                                // Ignore "@/", as that is sometimes a way to say package root.
+                                if (slash_index > 1 and record.path.text.len > 2) {
+                                    const after_slash = record.path.text[slash_index + 1 ..];
+                                    if (after_slash.len > 0) {
+                                        if (strings.indexOfChar(after_slash, '/')) |second_slash_index| {
+                                            package_path = record.path.text[0 .. second_slash_index + 1 + slash_index];
+                                        } else {
+                                            package_path = record.path.text;
+                                        }
+                                    }
+                                }
+                            }
+                        } else if (strings.indexOfChar(record.path.text, '/')) |slash_index| {
+                            if (slash_index > 0) {
+                                package_path = record.path.text[0..slash_index];
+                            }
+                        } else {
+                            package_path = record.path.text;
+                        }
+
+                        if (strings.isNPMPackageName(package_path)) {
+                            try external_deps.put(package_path, {});
+                        }
+                    }
+                }
+            }
+        }
+
+        var existing_package_json: ?*const PackageJSON = undefined;
+        if (this.bundler.resolver.resolve(bun.fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(), "./package.json", .entry_point)) |*result| {
+            existing_package_json = this.bundler.resolver.packageJSONForResolvedNodeModule(result);
+        } else |_| {
+            existing_package_json = null;
+        }
+
+        const package_json_source: Logger.Source = brk: {
+
+            // Do we have an existing package.json file? Let's take the existing
+            // one, re-parse it a 2nd time, update the "dependencies" list
+            // in-place to remove any unused ones and add any missing ones
+            // (keeping existing ones and their specified versions)
+            // Then, we will print THAT as the output file.
+            if (existing_package_json) |package_json| handle_existing_package_json: {
+                const source = &package_json.source;
+                var root = json_parser.parsePackageJSONUTF8AlwaysDecode(source, this.bundler.log, allocator) catch break :handle_existing_package_json;
+
+                if (root.data != .e_object) {
+                    break :handle_existing_package_json;
+                }
+
+                inline for (.{ "dependencies", "devDependencies" }) |current_key| {
+                    if (root.get(current_key)) |dependencies| {
+                        if (dependencies.data == .e_object) {
+                            const deps = dependencies.data.e_object.properties.slice();
+                            var j: usize = 0;
+                            for (0..deps.len) |i| {
+                                const dep = deps[i];
+                                const should_remove = brk2: {
+                                    const key = dep.key orelse break :brk2 true;
+                                    const value = dep.value orelse break :brk2 true;
+                                    if (key.data != .e_string) break :brk2 true;
+                                    if (value.data != .e_string) break :brk2 true;
+                                    if (key.asString(allocator)) |name| {
+                                        if (external_deps.contains(name)) break :brk2 false;
+                                    }
+                                    break :brk2 true;
+                                };
+                                if (!should_remove) {
+                                    deps[j] = dep;
+                                    j += 1;
+                                }
+                            }
+                            dependencies.data.e_object.properties.len = @truncate(j);
+                        }
+                    }
+                }
+                const has_trailing_newline = source.contents.len > 0 and source.contents[source.contents.len - 1] == '\n';
+                var buffer_writer = try js_printer.BufferWriter.init(allocator);
+                try buffer_writer.buffer.list.ensureTotalCapacity(allocator, source.contents.len + 1);
+                buffer_writer.append_newline = has_trailing_newline;
+                var package_json_writer = js_printer.BufferPrinter.init(buffer_writer);
+
+                _ = js_printer.printJSON(
+                    @TypeOf(&package_json_writer),
+                    &package_json_writer,
+                    root,
+
+                    // shouldn't be used
+                    source,
+                    .{
+                        // TODO: use the existing indentation
+                    },
+                ) catch |err| {
+                    return switch (err) {
+                        error.OutOfMemory => |oom| oom,
+                        else => {
+                            Output.errGeneric("failed to print edited package.json: {s}", .{@errorName(err)});
+                            Global.crash();
+                        },
+                    };
+                };
+
+                break :brk .{
+                    .path = source.path,
+                    .contents = package_json_writer.ctx.writtenWithoutTrailingZero(),
+                };
+            }
+
+            // Otherwise, we generate a new package.json file from scratch.
+            // Let's set the "name" field to match the directory name if one exists.
+            const name_string: []const u8 = brk2: {
+                if (std.fs.path.dirname(bun.fs.FileSystem.instance.topLevelDirWithoutTrailingSlash())) |dirname_path| {
+                    const basename = std.fs.path.basename(dirname_path);
+                    if (strings.isNPMPackageName(basename)) {
+                        break :brk2 basename;
+                    }
+                }
+                break :brk2 "";
+            };
+
+            var root_properties = std.ArrayList(G.Property).init(allocator);
+
+            if (name_string.len > 0) {
+                try root_properties.append(G.Property{
+                    .key = Expr.init(E.String, E.String.init("name"), Logger.Loc.Empty),
+                    .value = Expr.init(E.String, E.String.init(name_string), Logger.Loc.Empty),
+                });
+            }
+
+            var dependency_keys = try std.ArrayList(G.Property).initCapacity(allocator, external_deps.count());
+
+            var iter = external_deps.keyIterator();
+            while (iter.next()) |key| {
+                try dependency_keys.append(G.Property{
+                    .key = Expr.init(E.String, E.String.init(key.*), Logger.Loc.Empty),
+                    .value = Expr.init(E.String, E.String.init("*"), Logger.Loc.Empty),
+                });
+            }
+
+            try root_properties.append(G.Property{
+                .key = Expr.init(E.String, E.String.init("dependencies"), Logger.Loc.Empty),
+                .value = Expr.init(E.Object, E.Object{ .properties = G.Property.List.init(dependency_keys.items) }, Logger.Loc.Empty),
+            });
+
+            const root = Expr.init(E.Object, E.Object{ .properties = G.Property.List.init(root_properties.items) }, Logger.Loc.Empty);
+
+            var buffer_writer = try js_printer.BufferWriter.init(allocator);
+            try buffer_writer.buffer.list.ensureTotalCapacity(allocator, 1024);
+            var package_json_writer = js_printer.BufferPrinter.init(buffer_writer);
+
+            _ = try js_printer.printJSON(
+                @TypeOf(&package_json_writer),
+                &package_json_writer,
+                root,
+                &.{ .path = bun.fs.Path.init("package.json"), .contents = "" },
+                .{},
+            );
+
+            break :brk .{
+                .path = bun.fs.Path.init("package.json"),
+                .contents = package_json_writer.ctx.writtenWithoutTrailingZero(),
+            };
+        };
+
+        try output_files.append(options.OutputFile.init(.{
+            .output_path = "package.json",
+            .input_path = "package.json",
+            .loader = .json,
+            .input_loader = .file,
+            .output_kind = .@"entry-point",
+            .size = @as(u32, @truncate(package_json_source.contents.len)),
+            .data = .{
+                .buffer = .{
+                    .allocator = allocator,
+                    .data = package_json_source.contents,
+                },
+            },
+            .side = null,
+            .entry_point_index = null,
+            .is_executable = false,
+        }));
+
+        return output_files;
+    }
+
     pub fn generateFromCLI(
         bundler: *ThisBundler,
         allocator: std.mem.Allocator,
@@ -1366,6 +1569,10 @@ pub const BundleV2 = struct {
 
         const reachable_files = try this.findReachableFiles();
         reachable_files_count.* = reachable_files.len -| 1; // - 1 for the runtime
+
+        if (this.bundler.options.transform_options.package_json) {
+            return try this.generatePackageJSON(allocator, reachable_files);
+        }
 
         try this.processFilesToCopy(reachable_files);
 

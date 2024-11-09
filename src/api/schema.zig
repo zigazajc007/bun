@@ -1698,6 +1698,9 @@ pub const Api = struct {
         /// ignore_dce_annotations
         ignore_dce_annotations: bool,
 
+        /// generate a package.json
+        package_json: bool = false,
+
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
 

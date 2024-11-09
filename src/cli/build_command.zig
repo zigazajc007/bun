@@ -52,6 +52,11 @@ pub const BuildCommand = struct {
             return bun.bake.production.buildCommand(ctx);
         }
 
+        if (ctx.args.package_json) {
+            ctx.args.packages = .external;
+            ctx.bundler_options.compile = false;
+        }
+
         const compile_target = &ctx.bundler_options.compile_target;
 
         if (ctx.bundler_options.compile) {
@@ -168,7 +173,7 @@ pub const BuildCommand = struct {
             }
         }
 
-        if (ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile) {
+        if (ctx.bundler_options.outdir.len == 0 and !ctx.bundler_options.compile and !ctx.args.package_json) {
             if (this_bundler.options.entry_points.len > 1) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point.", .{});
                 Global.exit(1);
