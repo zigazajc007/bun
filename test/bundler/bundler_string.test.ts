@@ -95,6 +95,8 @@ const templateStringTests: Record<string, TemplateStringTest> = {
   TaggedTemplate7: { expr: 'String.raw`\xE6${"one"}`', print: true },
   TaggedTemplate8: { expr: 'String.raw`\u{10334}${"two"}→`', print: true },
   TaggedTemplate9: { expr: 'String.raw`\\u{10334}${"two"}→`', print: true },
+  RegExp1: { expr: "/æ/.source", print: true },
+  RegExp2: { expr: "/\xE6/.source", print: true },
 };
 
 describe("bundler", () => {
