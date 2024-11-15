@@ -1586,8 +1586,8 @@ pub const PackageManifest = struct {
 
                     if (prop.value.?.asProperty("dist")) |dist_q| {
                         if (dist_q.expr.get("tarball")) |tarball_prop| {
-                            if (tarball_prop.data == .e_string) {
-                                const tarball = tarball_prop.data.e_string.slice(allocator);
+                            if (tarball_prop.data == .e_string_2) {
+                                const tarball = tarball_prop.data.e_string_2.toWtf8MayAlloc(allocator) catch bun.outOfMemory();
                                 string_builder.count(tarball);
                                 tarball_urls_count += @as(usize, @intFromBool(tarball.len > 0));
                             }
@@ -1613,7 +1613,7 @@ pub const PackageManifest = struct {
                                         string_builder.count(bin_prop.value.?.asString(allocator) orelse break :bin);
                                     }
                                 },
-                                .e_string => {
+                                .e_string_2 => {
                                     if (bin.expr.asString(allocator)) |str_| {
                                         string_builder.count(str_);
                                         break :bin;
@@ -1785,8 +1785,8 @@ pub const PackageManifest = struct {
                                     }
                                 }
                             },
-                            .e_string => |stri| {
-                                cpu.apply(stri.data);
+                            .e_string_2 => |stri| {
+                                cpu.apply(stri.asWtf8JSON());
                             },
                             else => {},
                         }
@@ -1807,8 +1807,8 @@ pub const PackageManifest = struct {
                                     }
                                 }
                             },
-                            .e_string => |stri| {
-                                os.apply(stri.data);
+                            .e_string_2 => |stri| {
+                                os.apply(stri.asWtf8JSON());
                             },
                             else => {},
                         }
@@ -1829,8 +1829,8 @@ pub const PackageManifest = struct {
                                     }
                                 }
                             },
-                            .e_string => |stri| {
-                                libc_.apply(stri.data);
+                            .e_string_2 => |stri| {
+                                libc_.apply(stri.asWtf8JSON());
                             },
                             else => {},
                         }
@@ -1922,12 +1922,12 @@ pub const PackageManifest = struct {
 
                                     break :bin;
                                 },
-                                .e_string => |stri| {
-                                    if (stri.data.len > 0) {
+                                .e_string_2 => |stri| {
+                                    if (!stri.isEmpty()) {
                                         package_version.bin = .{
                                             .tag = .file,
                                             .value = .{
-                                                .file = string_builder.append(String, stri.data),
+                                                .file = string_builder.append(String, stri.asWtf8JSON()),
                                             },
                                         };
                                         break :bin;
@@ -1965,8 +1965,8 @@ pub const PackageManifest = struct {
                         if (prop.value.?.asProperty("dist")) |dist| {
                             if (dist.expr.data == .e_object) {
                                 if (dist.expr.asProperty("tarball")) |tarball_q| {
-                                    if (tarball_q.expr.data == .e_string and tarball_q.expr.data.e_string.len() > 0) {
-                                        package_version.tarball_url = string_builder.append(ExternalString, tarball_q.expr.data.e_string.slice(allocator));
+                                    if (tarball_q.expr.data == .e_string_2 and !tarball_q.expr.data.e_string_2.isEmpty()) {
+                                        package_version.tarball_url = string_builder.append(ExternalString, tarball_q.expr.data.e_string_2.toWtf8MayAlloc(allocator) catch bun.outOfMemory());
                                         tarball_url_strings[0] = package_version.tarball_url;
                                         tarball_url_strings = tarball_url_strings[1..];
                                     }

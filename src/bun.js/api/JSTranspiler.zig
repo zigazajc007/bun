@@ -294,14 +294,14 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) ?JSAst.Ex
     }
 
     if (value.isString()) {
-        const str = JSAst.E.String{
-            .data = std.fmt.allocPrint(bun.default_allocator, "{}", .{value.getZigString(globalThis)}) catch unreachable,
-        };
-        const out = bun.default_allocator.create(JSAst.E.String) catch unreachable;
+        const str = JSAst.E.String2.init(
+            std.fmt.allocPrint(bun.default_allocator, "{}", .{value.getZigString(globalThis)}) catch unreachable,
+        );
+        const out = bun.default_allocator.create(JSAst.E.String2) catch unreachable;
         out.* = str;
         return Expr{
             .data = .{
-                .e_string = out,
+                .e_string_2 = out,
             },
             .loc = logger.Loc.Empty,
         };

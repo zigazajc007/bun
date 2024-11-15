@@ -146,7 +146,7 @@ pub fn parseJSON(
         return error.UnsupportedVersion;
     };
 
-    if (mappings_str.data != .e_string) {
+    if (mappings_str.data != .e_string_2) {
         return error.InvalidSourceMap;
     }
 
@@ -176,10 +176,10 @@ pub fn parseJSON(
     };
 
     if (hint != .source_only) for (sources_paths.items.slice()) |item| {
-        if (item.data != .e_string)
+        if (item.data != .e_string_2)
             return error.InvalidSourceMap;
 
-        source_paths_slice.?[i] = try alloc.dupe(u8, try item.data.e_string.string(alloc));
+        source_paths_slice.?[i] = try alloc.dupe(u8, try item.data.e_string_2.toWtf8MayAlloc(alloc));
 
         i += 1;
     };
@@ -187,7 +187,7 @@ pub fn parseJSON(
     const map = if (hint != .source_only) map: {
         const map_data = switch (Mapping.parse(
             alloc,
-            mappings_str.data.e_string.slice(arena),
+            mappings_str.data.e_string_2.toWtf8MayAlloc(arena) catch bun.outOfMemory(),
             null,
             std.math.maxInt(i32),
             std.math.maxInt(i32),
@@ -217,11 +217,11 @@ pub fn parseJSON(
         source_index.? < sources_content.items.len)
     content: {
         const item = sources_content.items.slice()[source_index.?];
-        if (item.data != .e_string) {
+        if (item.data != .e_string_2) {
             break :content null;
         }
 
-        const str = item.data.e_string.string(arena) catch bun.outOfMemory();
+        const str = item.data.e_string_2.toWtf8MayAlloc(arena) catch bun.outOfMemory();
         if (str.len == 0) {
             break :content null;
         }

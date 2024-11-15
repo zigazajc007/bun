@@ -97,7 +97,7 @@ pub const BunxCommand = struct {
                         }
                     }
                 },
-                .e_string => {
+                .e_string_2 => {
                     if (expr.get("name")) |name_expr| {
                         if (name_expr.asString(bundler.allocator)) |name| {
                             return name;

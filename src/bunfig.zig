@@ -69,8 +69,8 @@ pub const Bunfig = struct {
             return error.@"Invalid Bunfig";
         }
 
-        fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
-            const url = URL.parse(str.data);
+        fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String2) !Api.NpmRegistry {
+            const url = URL.parse(str.asWtf8JSON());
             var registry = std.mem.zeroes(Api.NpmRegistry);
 
             // Token
@@ -120,7 +120,7 @@ pub const Bunfig = struct {
 
         fn parseRegistry(this: *Parser, expr: js_ast.Expr) !Api.NpmRegistry {
             switch (expr.data) {
-                .e_string => |str| {
+                .e_string_2 => |str| {
                     return this.parseRegistryURLString(str);
                 },
                 .e_object => |obj| {
@@ -160,14 +160,14 @@ pub const Bunfig = struct {
                 errdefer preloads.deinit();
                 while (array.next()) |item| {
                     try this.expectString(item);
-                    if (item.data.e_string.len() > 0)
-                        preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
+                    if (!item.data.e_string_2.isEmpty())
+                        preloads.appendAssumeCapacity(try item.data.e_string_2.toWtf8MayAlloc(allocator));
                 }
                 this.ctx.preloads = preloads.items;
-            } else if (expr.data == .e_string) {
-                if (expr.data.e_string.len() > 0) {
+            } else if (expr.data == .e_string_2) {
+                if (!expr.data.e_string_2.isEmpty()) {
                     var preloads = try allocator.alloc(string, 1);
-                    preloads[0] = try expr.data.e_string.string(allocator);
+                    preloads[0] = try expr.data.e_string_2.toWtf8MayAlloc(allocator);
                     this.ctx.preloads = preloads;
                 }
             } else if (expr.data != .e_null) {
@@ -194,17 +194,17 @@ pub const Bunfig = struct {
                 var valid_count: usize = 0;
                 const properties = expr.data.e_object.properties.slice();
                 for (properties) |prop| {
-                    if (prop.value.?.data != .e_string) continue;
+                    if (prop.value.?.data != .e_string_2) continue;
                     valid_count += 1;
                 }
-                var buffer = allocator.alloc([]const u8, valid_count * 2) catch unreachable;
+                var buffer = allocator.alloc([]const u8, valid_count * 2) catch bun.outOfMemory();
                 var keys = buffer[0..valid_count];
                 var values = buffer[valid_count..];
                 var i: usize = 0;
                 for (properties) |prop| {
-                    if (prop.value.?.data != .e_string) continue;
-                    keys[i] = prop.key.?.data.e_string.string(allocator) catch unreachable;
-                    values[i] = prop.value.?.data.e_string.string(allocator) catch unreachable;
+                    if (prop.value.?.data != .e_string_2) continue;
+                    keys[i] = prop.key.?.data.e_string_2.toWtf8MayAlloc(allocator) catch bun.outOfMemory();
+                    values[i] = prop.value.?.data.e_string_2.toWtf8MayAlloc(allocator) catch bun.outOfMemory();
                     i += 1;
                 }
                 this.bunfig.define = Api.StringMap{
@@ -215,7 +215,7 @@ pub const Bunfig = struct {
 
             if (json.get("origin")) |expr| {
                 try this.expectString(expr);
-                this.bunfig.origin = try expr.data.e_string.string(allocator);
+                this.bunfig.origin = try expr.data.e_string_2.toWtf8MayAlloc(allocator);
             }
 
             if (comptime cmd == .RunCommand or cmd == .AutoCommand) {
@@ -268,7 +268,7 @@ pub const Bunfig = struct {
 
                     if (test_.get("coverageReporter")) |expr| brk: {
                         this.ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
-                        if (expr.data == .e_string) {
+                        if (expr.data == .e_string_2) {
                             const item_str = expr.asString(bun.default_allocator) orelse "";
                             if (bun.strings.eqlComptime(item_str, "text")) {
                                 this.ctx.test_options.coverage.reporters.text = true;
@@ -298,7 +298,7 @@ pub const Bunfig = struct {
 
                     if (test_.get("coverageDir")) |expr| {
                         try this.expectString(expr);
-                        this.ctx.test_options.coverage.reports_directory = try expr.data.e_string.string(allocator);
+                        this.ctx.test_options.coverage.reports_directory = try expr.data.e_string_2.toWtf8MayAlloc(allocator);
                     }
 
                     if (test_.get("coverageThreshold")) |expr| outer: {
@@ -353,7 +353,7 @@ pub const Bunfig = struct {
                     };
 
                     if (install_obj.get("auto")) |auto_install_expr| {
-                        if (auto_install_expr.data == .e_string) {
+                        if (auto_install_expr.data == .e_string_2) {
                             this.ctx.debug.global_cache = options.GlobalCache.Map.get(auto_install_expr.asString(this.allocator) orelse "") orelse {
                                 try this.addError(auto_install_expr.loc, "Invalid auto install setting, must be one of true, false, or \"force\" \"fallback\" \"disable\"");
                                 return;
@@ -390,9 +390,9 @@ pub const Bunfig = struct {
                                     .list = list,
                                 };
                             },
-                            .e_string => |str| {
+                            .e_string_2 => |str| {
                                 install.ca = .{
-                                    .str = try str.stringCloned(allocator),
+                                    .str = try str.dupe(allocator),
                                 };
                             },
                             else => {
@@ -608,7 +608,7 @@ pub const Bunfig = struct {
                 if (comptime cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
                     if (_bun.get("outdir")) |dir| {
                         try this.expectString(dir);
-                        this.bunfig.output_dir = try dir.data.e_string.string(allocator);
+                        this.bunfig.output_dir = try dir.data.e_string_2.toWtf8MayAlloc(allocator);
                     }
                 }
 
@@ -623,7 +623,7 @@ pub const Bunfig = struct {
                         var names = try this.allocator.alloc(string, items.len);
                         for (items, 0..) |item, i| {
                             try this.expectString(item);
-                            names[i] = try item.data.e_string.string(allocator);
+                            names[i] = try item.data.e_string_2.toWtf8MayAlloc(allocator);
                         }
                         this.bunfig.entry_points = names;
                     }
@@ -644,7 +644,7 @@ pub const Bunfig = struct {
                         for (properties) |prop| {
                             if (prop.value.?.data != .e_boolean) continue;
 
-                            const path = try prop.key.?.data.e_string.string(allocator);
+                            const path = try prop.key.?.data.e_string_2.toWtf8MayAlloc(allocator);
 
                             if (!resolver.isPackagePath(path)) {
                                 try this.addError(prop.key.?.loc, "Expected package name");
@@ -746,9 +746,9 @@ pub const Bunfig = struct {
 
             if (json.get("external")) |expr| {
                 switch (expr.data) {
-                    .e_string => |str| {
+                    .e_string_2 => |str| {
                         var externals = try allocator.alloc(string, 1);
-                        externals[0] = try str.string(allocator);
+                        externals[0] = try str.toWtf8MayAlloc(allocator);
                         this.bunfig.external = externals;
                     },
                     .e_array => |array| {
@@ -756,7 +756,7 @@ pub const Bunfig = struct {
 
                         for (array.items.slice(), 0..) |item, i| {
                             try this.expectString(item);
-                            externals[i] = try item.data.e_string.string(allocator);
+                            externals[i] = try item.data.e_string_2.toWtf8MayAlloc(allocator);
                         }
 
                         this.bunfig.external = externals;
@@ -797,7 +797,7 @@ pub const Bunfig = struct {
 
         pub fn expectString(this: *Parser, expr: js_ast.Expr) !void {
             switch (expr.data) {
-                .e_string => {},
+                .e_string_2 => {},
                 else => {
                     this.log.addErrorFmtOpts(
                         this.allocator,

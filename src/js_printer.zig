@@ -1273,11 +1273,11 @@ fn NewPrinter(
                         }
                         temp_bindings.ensureUnusedCapacity(bun.default_allocator, 2) catch unreachable;
                         temp_bindings.appendAssumeCapacity(.{
-                            .key = Expr.init(E.String, E.String.init(target_e_dot.name), target_e_dot.name_loc),
+                            .key = Expr.init(E.String2, E.String2.init(target_e_dot.name), target_e_dot.name_loc),
                             .value = decls[0].binding,
                         });
                         temp_bindings.appendAssumeCapacity(.{
-                            .key = Expr.init(E.String, E.String.init(second_e_dot.name), second_e_dot.name_loc),
+                            .key = Expr.init(E.String2, E.String2.init(second_e_dot.name), second_e_dot.name_loc),
                             .value = decls[1].binding,
                         });
 
@@ -1300,7 +1300,7 @@ fn NewPrinter(
                             }
 
                             temp_bindings.append(bun.default_allocator, .{
-                                .key = Expr.init(E.String, E.String.init(e_dot.name), e_dot.name_loc),
+                                .key = Expr.init(E.String2, E.String2.init(e_dot.name), e_dot.name_loc),
                                 .value = decl.binding,
                             }) catch unreachable;
                             decls = decls[1..];
@@ -1464,17 +1464,6 @@ fn NewPrinter(
             if (class.close_brace_loc.start > class.body_loc.start)
                 p.addSourceMapping(class.close_brace_loc);
             p.print("}");
-        }
-
-        pub fn bestQuoteCharForEString(str: *const E.String, allow_backtick: bool) u8 {
-            if (comptime is_json)
-                return '"';
-
-            if (str.isUTF8()) {
-                return bestQuoteCharForString(u8, str.data, allow_backtick);
-            } else {
-                return bestQuoteCharForString(u16, str.slice16(), allow_backtick);
-            }
         }
 
         pub fn printWhitespacer(this: *Printer, spacer: Whitespacer) void {
@@ -1896,12 +1885,6 @@ fn NewPrinter(
             p.printWhitespacer(ws("/* @__PURE__ */ "));
         }
 
-        pub fn printStringLiteralEString(p: *Printer, str: *E.String, allow_backtick: bool) void {
-            const quote = bestQuoteCharForEString(str, allow_backtick);
-            p.print(quote);
-            p.printStringCharactersEString(str, quote);
-            p.print(quote);
-        }
         pub fn printStringLiteralUTF8(p: *Printer, str: string, allow_backtick: bool) void {
             if (Environment.allow_assert) std.debug.assert(std.unicode.wtf8ValidateSlice(str));
 
@@ -2468,13 +2451,12 @@ fn NewPrinter(
                     if (e.optional_chain == null) {
                         flags.insert(.has_non_optional_chain_parent);
 
-                        if (e.index.data.as(.e_string)) |str| {
-                            str.resolveRopeIfNeeded(p.options.allocator);
-
-                            if (str.isUTF8()) if (p.tryToGetImportedEnumValue(e.target, str.data)) |value| {
-                                p.printInlinedEnum(value, str.data, level);
+                        if (e.index.data.as(.e_string_2)) |str| {
+                            const str_val = str.toWtf8MayAlloc(p.options.allocator) catch bun.outOfMemory();
+                            if (p.tryToGetImportedEnumValue(e.target, str_val)) |value| {
+                                p.printInlinedEnum(value, str_val, level);
                                 return;
-                            };
+                            }
                         }
                     } else {
                         if (flags.contains(.has_non_optional_chain_parent)) {
@@ -2740,19 +2722,11 @@ fn NewPrinter(
                         p.print(if (e.value) "true" else "false");
                     }
                 },
-                .e_string => |e| {
-                    e.resolveRopeIfNeeded(p.options.allocator);
+                .e_string_2 => |e| {
+                    const value = e.toWtf8MayAlloc(p.options.allocator) catch bun.outOfMemory();
                     p.addSourceMapping(expr.loc);
 
-                    // If this was originally a template literal, print it as one as long as we're not minifying
-                    if (e.prefer_template and !p.options.minify_syntax) {
-                        p.print("`");
-                        p.printStringCharactersEString(e, '`');
-                        p.print("`");
-                        return;
-                    }
-
-                    p.printStringLiteralEString(e, true);
+                    p.printStringLiteralUTF8(value, true);
                 },
                 .e_template => |e| {
                     if (e.tag) |tag| {
@@ -2773,9 +2747,8 @@ fn NewPrinter(
                     switch (e.head) {
                         .raw => |raw| p.printRawTemplateLiteral(raw),
                         .cooked => |*cooked| {
-                            if (cooked.isPresent()) {
-                                cooked.resolveRopeIfNeeded(p.options.allocator);
-                                p.printStringCharactersEString(cooked, '`');
+                            if (!cooked.isEmpty()) {
+                                p.printStringCharactersUTF8(cooked.toWtf8MayAlloc(p.options.allocator) catch bun.outOfMemory(), '`');
                             }
                         },
                     }
@@ -2787,9 +2760,8 @@ fn NewPrinter(
                         switch (part.tail) {
                             .raw => |raw| p.printRawTemplateLiteral(raw),
                             .cooked => |*cooked| {
-                                if (cooked.isPresent()) {
-                                    cooked.resolveRopeIfNeeded(p.options.allocator);
-                                    p.printStringCharactersEString(cooked, '`');
+                                if (!cooked.isEmpty()) {
+                                    p.printStringCharactersUTF8(cooked.toWtf8MayAlloc(p.options.allocator) catch bun.outOfMemory(), '`');
                                 }
                             },
                         }
@@ -3087,15 +3059,6 @@ fn NewPrinter(
             p.print(")");
         }
 
-        // This assumes the string has already been quoted.
-        pub fn printStringCharactersEString(p: *Printer, str: *const E.String, c: u8) void {
-            if (!str.isUTF8()) {
-                p.printStringCharactersUTF16(str.slice16(), c);
-            } else {
-                p.printStringCharactersUTF8(str.data, c);
-            }
-        }
-
         pub fn printNamespaceAlias(p: *Printer, _: ImportRecord, namespace: G.NamespaceAlias) void {
             p.printSymbol(namespace.namespace_ref);
 
@@ -3210,7 +3173,7 @@ fn NewPrinter(
                         if (p.tryToGetImportedEnumValue(dot.target, dot.name)) |value| {
                             switch (value) {
                                 .string => |str| {
-                                    item.key.?.data = .{ .e_string = str };
+                                    item.key.?.data = .{ .e_string_2 = str };
 
                                     // Problematic key names must stay computed for correctness
                                     if (!str.eqlComptime("__proto__") and !str.eqlComptime("constructor") and !str.eqlComptime("prototype")) {
@@ -3323,32 +3286,48 @@ fn NewPrinter(
                     p.addSourceMapping(_key.loc);
                     p.printSymbol(priv.ref);
                 },
-                .e_string => |key| {
+                .e_string_2 => |key| {
                     p.addSourceMapping(_key.loc);
-                    if (key.isUTF8()) {
-                        key.resolveRopeIfNeeded(p.options.allocator);
-                        p.printSpaceBeforeIdentifier();
-                        var allow_shorthand: bool = true;
-                        // In react/cjs/react.development.js, there's part of a function like this:
-                        // var escaperLookup = {
-                        //     "=": "=0",
-                        //     ":": "=2"
-                        //   };
-                        // While each of those property keys are ASCII, a subset of ASCII is valid as the start of an identifier
-                        // "=" and ":" are not valid
-                        // So we need to check
-                        if (!is_json and js_lexer.isIdentifier(key.data)) {
-                            p.printIdentifier(key.data);
-                        } else {
-                            allow_shorthand = false;
-                            p.printStringLiteralEString(key, false);
-                        }
+                    p.printSpaceBeforeIdentifier();
+                    var allow_shorthand: bool = true;
+                    // In react/cjs/react.development.js, there's part of a function like this:
+                    // var escaperLookup = {
+                    //     "=": "=0",
+                    //     ":": "=2"
+                    //   };
+                    // While each of those property keys are ASCII, a subset of ASCII is valid as the start of an identifier
+                    // "=" and ":" are not valid
+                    // So we need to check
+                    const key_str = key.toWtf8MayAlloc(p.options.allocator) catch bun.outOfMemory();
+                    if (!is_json and js_lexer.isIdentifier(key_str)) {
+                        p.printIdentifier(key_str);
+                    } else {
+                        allow_shorthand = false;
+                        p.printStringLiteralUTF8(key_str, false);
+                    }
 
-                        // Use a shorthand property if the names are the same
-                        if (item.value) |val| {
-                            switch (val.data) {
-                                .e_identifier => |e| {
-                                    if (key.eql(string, p.renamer.nameForSymbol(e.ref))) {
+                    // Use a shorthand property if the names are the same
+                    if (item.value) |val| {
+                        switch (val.data) {
+                            .e_identifier => |e| {
+                                if (key.eqlSlice(p.renamer.nameForSymbol(e.ref))) {
+                                    if (item.initializer) |initial| {
+                                        p.printInitializer(initial);
+                                    }
+                                    if (allow_shorthand) {
+                                        return;
+                                    }
+                                }
+                            },
+                            .e_import_identifier => |e| inner: {
+                                const ref = p.symbols().follow(e.ref);
+                                if (p.options.input_files_for_dev_server != null)
+                                    break :inner;
+                                // if (p.options.const_values.count() > 0 and p.options.const_values.contains(ref))
+                                //     break :inner;
+
+                                if (p.symbols().get(ref)) |symbol| {
+                                    if (symbol.namespace_alias == null and strings.eql(key_str, p.renamer.nameForSymbol(e.ref))) {
                                         if (item.initializer) |initial| {
                                             p.printInitializer(initial);
                                         }
@@ -3356,73 +3335,10 @@ fn NewPrinter(
                                             return;
                                         }
                                     }
-                                },
-                                .e_import_identifier => |e| inner: {
-                                    const ref = p.symbols().follow(e.ref);
-                                    if (p.options.input_files_for_dev_server != null)
-                                        break :inner;
-                                    // if (p.options.const_values.count() > 0 and p.options.const_values.contains(ref))
-                                    //     break :inner;
-
-                                    if (p.symbols().get(ref)) |symbol| {
-                                        if (symbol.namespace_alias == null and strings.eql(key.data, p.renamer.nameForSymbol(e.ref))) {
-                                            if (item.initializer) |initial| {
-                                                p.printInitializer(initial);
-                                            }
-                                            if (allow_shorthand) {
-                                                return;
-                                            }
-                                        }
-                                    }
-                                },
-                                else => {},
-                            }
+                                }
+                            },
+                            else => {},
                         }
-                    } else if (!is_json and p.canPrintIdentifierUTF16(key.slice16())) {
-                        p.printSpaceBeforeIdentifier();
-                        p.printIdentifierUTF16(key.slice16()) catch unreachable;
-
-                        // Use a shorthand property if the names are the same
-                        if (item.value) |val| {
-                            switch (val.data) {
-                                .e_identifier => |e| {
-
-                                    // TODO: is needing to check item.flags.contains(.was_shorthand) a bug?
-                                    // esbuild doesn't have to do that...
-                                    // maybe it's a symptom of some other underlying issue
-                                    // or maybe, it's because i'm not lowering the same way that esbuild does.
-                                    if (item.flags.contains(.was_shorthand) or strings.utf16EqlString(key.slice16(), p.renamer.nameForSymbol(e.ref))) {
-                                        if (item.initializer) |initial| {
-                                            p.printInitializer(initial);
-                                        }
-                                        return;
-                                    }
-                                    // if (strings) {}
-                                },
-                                // .e_import_identifier => |e| inner: {
-                                .e_import_identifier => |e| {
-                                    const ref = p.symbols().follow(e.ref);
-
-                                    // if (p.options.const_values.count() > 0 and p.options.const_values.contains(ref))
-                                    //     break :inner;
-
-                                    if (p.symbols().get(ref)) |symbol| {
-                                        if (symbol.namespace_alias == null and strings.utf16EqlString(key.slice16(), p.renamer.nameForSymbol(e.ref))) {
-                                            if (item.initializer) |initial| {
-                                                p.printInitializer(initial);
-                                            }
-                                            return;
-                                        }
-                                    }
-                                },
-                                else => {},
-                            }
-                        }
-                    } else {
-                        const c = bestQuoteCharForString(u16, key.slice16(), false);
-                        p.print(c);
-                        p.printStringCharactersUTF16(key.slice16(), c);
-                        p.print(c);
                     }
                 },
                 else => {
@@ -3567,42 +3483,24 @@ fn NewPrinter(
                                 }
 
                                 switch (property.key.data) {
-                                    .e_string => |str| {
-                                        str.resolveRopeIfNeeded(p.options.allocator);
+                                    .e_string_2 => |str| {
                                         p.addSourceMapping(property.key.loc);
 
-                                        if (str.isUTF8()) {
-                                            p.printSpaceBeforeIdentifier();
-                                            // Example case:
-                                            //      const Menu = React.memo(function Menu({
-                                            //          aria-label: ariaLabel,
-                                            //              ^
-                                            // That needs to be:
-                                            //          "aria-label": ariaLabel,
-                                            if (js_lexer.isIdentifier(str.data)) {
-                                                p.printIdentifier(str.data);
-
-                                                // Use a shorthand property if the names are the same
-                                                switch (property.value.data) {
-                                                    .b_identifier => |id| {
-                                                        if (str.eql(string, p.renamer.nameForSymbol(id.ref))) {
-                                                            p.maybePrintDefaultBindingValue(property);
-                                                            continue;
-                                                        }
-                                                    },
-                                                    else => {},
-                                                }
-                                            } else {
-                                                p.printStringLiteralUTF8(str.data, false);
-                                            }
-                                        } else if (p.canPrintIdentifierUTF16(str.slice16())) {
-                                            p.printSpaceBeforeIdentifier();
-                                            p.printIdentifierUTF16(str.slice16()) catch unreachable;
+                                        p.printSpaceBeforeIdentifier();
+                                        // Example case:
+                                        //      const Menu = React.memo(function Menu({
+                                        //          aria-label: ariaLabel,
+                                        //              ^
+                                        // That needs to be:
+                                        //          "aria-label": ariaLabel,
+                                        const str_value = str.toWtf8MayAlloc(p.options.allocator) catch bun.outOfMemory();
+                                        if (js_lexer.isIdentifier(str_value)) {
+                                            p.printIdentifier(str_value);
 
                                             // Use a shorthand property if the names are the same
                                             switch (property.value.data) {
                                                 .b_identifier => |id| {
-                                                    if (strings.utf16EqlString(str.slice16(), p.renamer.nameForSymbol(id.ref))) {
+                                                    if (str.eqlSlice(p.renamer.nameForSymbol(id.ref))) {
                                                         p.maybePrintDefaultBindingValue(property);
                                                         continue;
                                                     }
@@ -3610,7 +3508,7 @@ fn NewPrinter(
                                                 else => {},
                                             }
                                         } else {
-                                            p.printExpr(property.key, .lowest, ExprFlag.None());
+                                            p.printStringLiteralUTF8(str_value, false);
                                         }
                                     },
                                     else => {
@@ -4949,7 +4847,7 @@ fn NewPrinter(
 
                 // TODO: extract printString
                 .string => |str| p.printExpr(.{
-                    .data = .{ .e_string = str },
+                    .data = .{ .e_string_2 = str },
                     .loc = logger.Loc.Empty,
                 }, level, .{}),
             }

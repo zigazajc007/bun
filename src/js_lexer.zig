@@ -171,8 +171,8 @@ fn NewLexer_(
         allocator: std.mem.Allocator,
         string_literal_raw_content: string = "",
         string_literal_start: usize = 0,
-        string_literal_raw_format: enum { ascii, utf16, needs_decode } = .ascii,
-        temp_buffer_u16: std.ArrayList(u16),
+        string_literal_raw_format: enum { ascii, utf8, needs_decode } = .ascii,
+        temp_buffer_u8: std.ArrayList(u8),
 
         /// Only used for JSON stringification when bundling
         /// This is a zero-bit type unless we're parsing JSON.
@@ -294,15 +294,16 @@ fn NewLexer_(
         }
 
         pub fn deinit(this: *LexerType) void {
-            this.temp_buffer_u16.clearAndFree();
+            this.temp_buffer_u8.clearAndFree();
             this.all_comments.clearAndFree();
             this.comments_to_preserve_before.clearAndFree();
         }
 
-        fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, comptime BufType: type, buf_: *BufType) !void {
-            var buf = buf_.*;
-            defer buf_.* = buf;
+        fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, buf: *std.ArrayList(u8)) !void {
             if (comptime is_json) lexer.is_ascii_only = false;
+
+            var waiting_to_pair_len: usize = 0;
+            var waiting_to_pair_codepoint: i32 = 0;
 
             const iterator = strings.CodepointIterator{ .bytes = text, .i = 0 };
             var iter = strings.CodepointIterator.Cursor{};
@@ -620,17 +621,39 @@ fn NewLexer_(
                     else => {},
                 }
 
-                switch (iter.c) {
-                    -1 => return try lexer.addDefaultError("Unexpected end of file"),
-                    0...0xFFFF => {
-                        buf.append(@as(u16, @intCast(iter.c))) catch unreachable;
-                    },
-                    else => {
-                        iter.c -= 0x10000;
-                        buf.ensureUnusedCapacity(2) catch unreachable;
-                        buf.appendAssumeCapacity(@as(u16, @intCast(0xD800 + ((iter.c >> 10) & 0x3FF))));
-                        buf.appendAssumeCapacity(@as(u16, @intCast(0xDC00 + (iter.c & 0x3FF))));
-                    },
+                if (iter.c == -1) return lexer.addDefaultError("Unexpected end of file");
+
+                const first_high_surrogate = 0xD800;
+                const last_high_surrogate = 0xDBFF;
+                const first_low_surrogate = 0xDC00;
+                const last_low_surrogate = 0xDFFF;
+
+                if (iter.c >= first_low_surrogate and iter.c <= last_low_surrogate and waiting_to_pair_len != 0 and waiting_to_pair_len == buf.items.len) {
+                    // pair
+                    bun.assert(waiting_to_pair_len >= 3);
+                    bun.assert(buf.items.len >= 3);
+
+                    var codepoint_buf: [4]u8 = undefined;
+
+                    const high_half: i32 = waiting_to_pair_codepoint;
+                    const low_half: i32 = iter.c;
+                    const result: i32 = 0x10000 + ((high_half & 0x03ff) << 10) | (low_half & 0x03ff);
+
+                    const len = strings.encodeWTF8Rune(&codepoint_buf, result);
+                    buf.items.len -= 3;
+                    try buf.appendSlice(codepoint_buf[0..len]);
+                    continue;
+                }
+
+                var codepoint_buf: [4]u8 = undefined;
+                const len = strings.encodeWTF8Rune(&codepoint_buf, iter.c);
+                try buf.appendSlice(codepoint_buf[0..len]);
+
+                if (iter.c >= first_high_surrogate and iter.c <= last_high_surrogate) {
+                    // mark pairable
+                    bun.assert(len == 3);
+                    waiting_to_pair_codepoint = iter.c;
+                    waiting_to_pair_len = codepoint_buf.len;
                 }
             }
         }
@@ -935,11 +958,11 @@ fn NewLexer_(
             // Second pass: re-use our existing escape sequence parser
             const original_text = lexer.raw();
 
-            bun.assert(lexer.temp_buffer_u16.items.len == 0);
-            defer lexer.temp_buffer_u16.clearRetainingCapacity();
-            try lexer.temp_buffer_u16.ensureUnusedCapacity(original_text.len);
-            try lexer.decodeEscapeSequences(lexer.start, original_text, std.ArrayList(u16), &lexer.temp_buffer_u16);
-            result.contents = try lexer.utf16ToString(lexer.temp_buffer_u16.items);
+            bun.assert(lexer.temp_buffer_u8.items.len == 0);
+            defer lexer.temp_buffer_u8.clearRetainingCapacity();
+            try lexer.temp_buffer_u8.ensureUnusedCapacity(original_text.len);
+            try lexer.decodeEscapeSequences(lexer.start, original_text, &lexer.temp_buffer_u8);
+            result.contents = try lexer.allocator.dupe(u8, lexer.temp_buffer_u8.items);
 
             const identifier = if (kind != .private)
                 result.contents
@@ -2042,7 +2065,7 @@ fn NewLexer_(
             var lex = LexerType{
                 .log = log,
                 .source = source,
-                .temp_buffer_u16 = std.ArrayList(u16).init(allocator),
+                .temp_buffer_u8 = std.ArrayList(u8).init(allocator),
                 .prev_error_loc = logger.Loc.Empty,
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
@@ -2058,7 +2081,7 @@ fn NewLexer_(
             var lex = LexerType{
                 .log = log,
                 .source = source,
-                .temp_buffer_u16 = std.ArrayList(u16).init(allocator),
+                .temp_buffer_u8 = std.ArrayList(u8).init(allocator),
                 .prev_error_loc = logger.Loc.Empty,
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
@@ -2074,7 +2097,7 @@ fn NewLexer_(
             return LexerType{
                 .log = log,
                 .source = source,
-                .temp_buffer_u16 = std.ArrayList(u16).init(allocator),
+                .temp_buffer_u8 = std.ArrayList(u8).init(allocator),
                 .prev_error_loc = logger.Loc.Empty,
                 .allocator = allocator,
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
@@ -2090,40 +2113,27 @@ fn NewLexer_(
             return lex;
         }
 
-        pub fn toEString(lexer: *LexerType) !js_ast.E.String {
+        pub fn toEString(lexer: *LexerType) !js_ast.E.String2 {
             switch (lexer.string_literal_raw_format) {
-                .ascii => {
+                .ascii, .utf8 => {
                     // string_literal_raw_content contains ascii without escapes
-                    return js_ast.E.String.init(lexer.string_literal_raw_content);
-                },
-                .utf16 => {
-                    // string_literal_raw_content is already parsed, duplicated, and utf-16
-                    return js_ast.E.String.init(@as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, lexer.string_literal_raw_content))));
+                    return js_ast.E.String2.init(lexer.string_literal_raw_content);
                 },
                 .needs_decode => {
                     // string_literal_raw_content contains escapes (ie '\n') that need to be converted to their values (ie 0x0A).
                     // escape parsing may cause a syntax error.
-                    bun.assert(lexer.temp_buffer_u16.items.len == 0);
-                    defer lexer.temp_buffer_u16.clearRetainingCapacity();
-                    try lexer.temp_buffer_u16.ensureUnusedCapacity(lexer.string_literal_raw_content.len);
-                    try lexer.decodeEscapeSequences(lexer.string_literal_start, lexer.string_literal_raw_content, std.ArrayList(u16), &lexer.temp_buffer_u16);
-                    const first_non_ascii = strings.firstNonASCII16([]const u16, lexer.temp_buffer_u16.items);
-                    // prefer to store an ascii e.string rather than a utf-16 one. ascii takes less memory, and `+` folding is not yet supported on utf-16.
-                    if (first_non_ascii != null) {
-                        return js_ast.E.String.init(try lexer.allocator.dupe(u16, lexer.temp_buffer_u16.items));
-                    } else {
-                        const result = try lexer.allocator.alloc(u8, lexer.temp_buffer_u16.items.len);
-                        strings.copyU16IntoU8(result, []const u16, lexer.temp_buffer_u16.items);
-                        return js_ast.E.String.init(result);
-                    }
+                    // TODO: decode to utf-8 directly. Make sure to handle surrogate halves correctly, including when mixed in with escaped surrogate halves.
+                    bun.assert(lexer.temp_buffer_u8.items.len == 0);
+                    defer lexer.temp_buffer_u8.clearRetainingCapacity();
+                    try lexer.temp_buffer_u8.ensureUnusedCapacity(lexer.string_literal_raw_content.len);
+                    try lexer.decodeEscapeSequences(lexer.string_literal_start, lexer.string_literal_raw_content, &lexer.temp_buffer_u8);
+                    return js_ast.E.String2.init(try lexer.allocator.dupe(u8, lexer.temp_buffer_u8.items));
                 },
             }
         }
 
-        pub fn toUTF8EString(lexer: *LexerType) !js_ast.E.String {
-            var res = try lexer.toEString();
-            try res.toUTF8(lexer.allocator);
-            return res;
+        pub fn toUTF8EString(lexer: *LexerType) !js_ast.E.String2 {
+            return lexer.toEString();
         }
 
         inline fn assertNotJSON(_: *const LexerType) void {
@@ -2405,13 +2415,13 @@ fn NewLexer_(
 
             const raw_content_slice = lexer.source.contents[lexer.start + 1 .. lexer.end - 1];
             if (needs_decode) {
-                bun.assert(lexer.temp_buffer_u16.items.len == 0);
-                defer lexer.temp_buffer_u16.clearRetainingCapacity();
-                try lexer.temp_buffer_u16.ensureUnusedCapacity(raw_content_slice.len);
-                try lexer.fixWhitespaceAndDecodeJSXEntities(raw_content_slice, &lexer.temp_buffer_u16);
+                bun.assert(lexer.temp_buffer_u8.items.len == 0);
+                defer lexer.temp_buffer_u8.clearRetainingCapacity();
+                try lexer.temp_buffer_u8.ensureUnusedCapacity(raw_content_slice.len);
+                try lexer.fixWhitespaceAndDecodeJSXEntities(raw_content_slice, &lexer.temp_buffer_u8);
 
-                lexer.string_literal_raw_content = std.mem.sliceAsBytes(try lexer.allocator.dupe(u16, lexer.temp_buffer_u16.items));
-                lexer.string_literal_raw_format = .utf16;
+                lexer.string_literal_raw_content = try lexer.allocator.dupe(u8, lexer.temp_buffer_u8.items);
+                lexer.string_literal_raw_format = .utf8;
             } else {
                 lexer.string_literal_raw_content = raw_content_slice;
                 lexer.string_literal_raw_format = .ascii;
@@ -2477,14 +2487,14 @@ fn NewLexer_(
                         const raw_content_slice = lexer.source.contents[original_start..lexer.end];
 
                         if (needs_fixing) {
-                            bun.assert(lexer.temp_buffer_u16.items.len == 0);
-                            defer lexer.temp_buffer_u16.clearRetainingCapacity();
-                            try lexer.temp_buffer_u16.ensureUnusedCapacity(raw_content_slice.len);
-                            try lexer.fixWhitespaceAndDecodeJSXEntities(raw_content_slice, &lexer.temp_buffer_u16);
-                            lexer.string_literal_raw_content = std.mem.sliceAsBytes(try lexer.allocator.dupe(u16, lexer.temp_buffer_u16.items));
-                            lexer.string_literal_raw_format = .utf16;
+                            bun.assert(lexer.temp_buffer_u8.items.len == 0);
+                            defer lexer.temp_buffer_u8.clearRetainingCapacity();
+                            try lexer.temp_buffer_u8.ensureUnusedCapacity(raw_content_slice.len);
+                            try lexer.fixWhitespaceAndDecodeJSXEntities(raw_content_slice, &lexer.temp_buffer_u8);
+                            lexer.string_literal_raw_content = try lexer.allocator.dupe(u8, lexer.temp_buffer_u8.items);
+                            lexer.string_literal_raw_format = .utf8;
 
-                            if (lexer.temp_buffer_u16.items.len == 0) {
+                            if (lexer.temp_buffer_u8.items.len == 0) {
                                 lexer.has_newline_before = true;
                                 continue;
                             }
@@ -2499,7 +2509,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn fixWhitespaceAndDecodeJSXEntities(lexer: *LexerType, text: string, decoded: *std.ArrayList(u16)) !void {
+        pub fn fixWhitespaceAndDecodeJSXEntities(lexer: *LexerType, text: string, decoded: *std.ArrayList(u8)) !void {
             lexer.assertNotJSON();
 
             var after_last_non_whitespace: ?u32 = null;
@@ -2584,7 +2594,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn decodeJSXEntities(lexer: *LexerType, text: string, out: *std.ArrayList(u16)) !void {
+        pub fn decodeJSXEntities(lexer: *LexerType, text: string, out: *std.ArrayList(u8)) !void {
             lexer.assertNotJSON();
 
             const iterator = strings.CodepointIterator.init(text);
@@ -2593,23 +2603,9 @@ fn NewLexer_(
             while (iterator.next(&cursor)) {
                 if (cursor.c == '&') lexer.maybeDecodeJSXEntity(text, &cursor);
 
-                if (cursor.c <= 0xFFFF) {
-                    try out.append(@as(u16, @intCast(cursor.c)));
-                } else {
-                    cursor.c -= 0x10000;
-                    try out.ensureUnusedCapacity(2);
-                    (out.items.ptr + out.items.len)[0..2].* = [_]u16{
-                        @as(
-                            u16,
-                            @truncate(@as(u32, @bitCast(@as(i32, 0xD800) + ((cursor.c >> 10) & 0x3FF)))),
-                        ),
-                        @as(
-                            u16,
-                            @truncate(@as(u32, @bitCast(@as(i32, 0xDC00) + (cursor.c & 0x3FF)))),
-                        ),
-                    };
-                    out.items = out.items.ptr[0 .. out.items.len + 2];
-                }
+                var codepoint_buf: [4]u8 = undefined;
+                const len = strings.encodeWTF8Rune(&codepoint_buf, cursor.c);
+                try out.appendSlice(codepoint_buf[0..len]);
             }
         }
         pub fn expectInsideJSXElement(lexer: *LexerType, token: T) !void {

@@ -7555,10 +7555,8 @@ pub const PackageManager = struct {
             };
 
             const patchfile_expr = try Expr.init(
-                E.String,
-                E.String{
-                    .data = patchfile_path,
-                },
+                E.String2,
+                E.String2.init(patchfile_path),
                 logger.Loc.Empty,
             ).clone(manager.allocator);
 
@@ -7589,8 +7587,8 @@ pub const PackageManager = struct {
 
             for (names_to_add, 0..) |name, i| {
                 for (original_trusted_dependencies.items.slice()) |item| {
-                    if (item.data == .e_string) {
-                        if (item.data.e_string.eql(string, name)) {
+                    if (item.data == .e_string_2) {
+                        if (item.data.e_string_2.eqlSlice(name)) {
                             const temp = names_to_add[i];
                             names_to_add[i] = names_to_add[len - 1];
                             names_to_add[len - 1] = temp;
@@ -7628,10 +7626,8 @@ pub const PackageManager = struct {
                         i -= 1;
                         if (deps[i].data == .e_missing) {
                             deps[i] = try Expr.init(
-                                E.String,
-                                E.String{
-                                    .data = name,
-                                },
+                                E.String2,
+                                E.String2.init(name),
                                 logger.Loc.Empty,
                             ).clone(allocator);
                             break;
@@ -7673,10 +7669,10 @@ pub const PackageManager = struct {
                 var root_properties = try allocator.alloc(JSAst.G.Property, 1);
                 root_properties[0] = JSAst.G.Property{
                     .key = Expr.init(
-                        E.String,
-                        E.String{
-                            .data = trusted_dependencies_string,
-                        },
+                        E.String2,
+                        E.String2.init(
+                            trusted_dependencies_string,
+                        ),
                         logger.Loc.Empty,
                     ),
                     .value = trusted_dependencies_array,
@@ -7694,10 +7690,10 @@ pub const PackageManager = struct {
                 @memcpy(root_properties[0..package_json.data.e_object.properties.len], package_json.data.e_object.properties.slice());
                 root_properties[root_properties.len - 1] = .{
                     .key = Expr.init(
-                        E.String,
-                        E.String{
-                            .data = trusted_dependencies_string,
-                        },
+                        E.String2,
+                        E.String2.init(
+                            trusted_dependencies_string,
+                        ),
                         logger.Loc.Empty,
                     ),
                     .value = trusted_dependencies_array,
@@ -7737,9 +7733,9 @@ pub const PackageManager = struct {
                             // set each npm dependency to latest
                             for (root.expr.data.e_object.properties.slice()) |*dep| {
                                 const key = dep.key orelse continue;
-                                if (key.data != .e_string) continue;
+                                if (key.data != .e_string_2) continue;
                                 const value = dep.value orelse continue;
-                                if (value.data != .e_string) continue;
+                                if (value.data != .e_string_2) continue;
 
                                 const version_literal = try value.asStringCloned(allocator) orelse bun.outOfMemory();
                                 var tag = Dependency.Version.Tag.infer(version_literal);
@@ -7779,9 +7775,7 @@ pub const PackageManager = struct {
                                     else
                                         allocator.dupe(u8, "latest") catch bun.outOfMemory();
 
-                                    dep.value = Expr.allocate(allocator, E.String, .{
-                                        .data = temp_version,
-                                    }, logger.Loc.Empty);
+                                    dep.value = Expr.allocate(allocator, E.String2, E.String2.init(temp_version), logger.Loc.Empty);
                                 }
                             }
                         } else {
@@ -7797,9 +7791,9 @@ pub const PackageManager = struct {
 
                             for (root.expr.data.e_object.properties.slice()) |*dep| {
                                 const key = dep.key orelse continue;
-                                if (key.data != .e_string) continue;
+                                if (key.data != .e_string_2) continue;
                                 const value = dep.value orelse continue;
-                                if (value.data != .e_string) continue;
+                                if (value.data != .e_string_2) continue;
 
                                 const key_str = key.asString(allocator) orelse bun.outOfMemory();
 
@@ -7852,21 +7846,21 @@ pub const PackageManager = struct {
                                                 // negative because the real package might have a scope
                                                 // e.g. "dep": "npm:@foo/bar@1.2.3"
                                                 if (strings.lastIndexOfChar(dep_literal, '@')) |at_index| {
-                                                    dep.value = Expr.allocate(allocator, E.String, .{
-                                                        .data = try std.fmt.allocPrint(allocator, "{s}@{s}", .{
+                                                    dep.value = Expr.allocate(allocator, E.String2, E.String2.init(
+                                                        try std.fmt.allocPrint(allocator, "{s}@{s}", .{
                                                             dep_literal[0..at_index],
                                                             new_version,
                                                         }),
-                                                    }, logger.Loc.Empty);
+                                                    ), logger.Loc.Empty);
                                                     break :updated;
                                                 }
 
                                                 // fallthrough and replace entire version.
                                             }
 
-                                            dep.value = Expr.allocate(allocator, E.String, .{
-                                                .data = new_version,
-                                            }, logger.Loc.Empty);
+                                            dep.value = Expr.allocate(allocator, E.String2, E.String2.init(
+                                                new_version,
+                                            ), logger.Loc.Empty);
                                             break :updated;
                                         }
                                     }
@@ -7917,8 +7911,8 @@ pub const PackageManager = struct {
                 if (options.add_trusted_dependencies) {
                     for (manager.trusted_deps_to_add_to_package_json.items, 0..) |trusted_package_name, i| {
                         for (original_trusted_dependencies.items.slice()) |item| {
-                            if (item.data == .e_string) {
-                                if (item.data.e_string.eql(string, trusted_package_name)) {
+                            if (item.data == .e_string_2) {
+                                if (item.data.e_string_2.eqlSlice(trusted_package_name)) {
                                     allocator.free(manager.trusted_deps_to_add_to_package_json.swapRemove(i));
                                     break;
                                 }
@@ -7937,7 +7931,7 @@ pub const PackageManager = struct {
                                     request.version.literal.slice(request.version_buf);
 
                                 if (query.expr.asProperty(name)) |value| {
-                                    if (value.expr.data == .e_string) {
+                                    if (value.expr.data == .e_string_2) {
                                         if (request.package_id != invalid_package_id and strings.eqlLong(list, dependency_list, true)) {
                                             replacing += 1;
                                         } else {
@@ -7967,7 +7961,7 @@ pub const PackageManager = struct {
                                                     .original_version = null,
                                                 };
                                             }
-                                            request.e_string = value.expr.data.e_string;
+                                            request.e_string_2 = value.expr.data.e_string_2;
                                             remaining -= 1;
                                         }
                                     }
@@ -7977,8 +7971,8 @@ pub const PackageManager = struct {
                                         for (query.expr.data.e_object.properties.slice()) |item| {
                                             if (item.value) |v| {
                                                 const url = request.version.literal.slice(request.version_buf);
-                                                if (v.data == .e_string and v.data.e_string.eql(string, url)) {
-                                                    request.e_string = v.data.e_string;
+                                                if (v.data == .e_string_2 and v.data.e_string_2.eqlSlice(url)) {
+                                                    request.e_string_2 = v.data.e_string_2;
                                                     remaining -= 1;
                                                     break;
                                                 }
@@ -8034,9 +8028,7 @@ pub const PackageManager = struct {
                         while (i > 0) {
                             i -= 1;
                             if (deps[i].data == .e_missing) {
-                                deps[i] = Expr.allocate(allocator, E.String, .{
-                                    .data = package_name,
-                                }, logger.Loc.Empty);
+                                deps[i] = Expr.allocate(allocator, E.String2, E.String2.init(package_name), logger.Loc.Empty);
                                 break;
                             }
                         }
@@ -8050,14 +8042,13 @@ pub const PackageManager = struct {
                 };
 
                 outer: for (updates) |*request| {
-                    if (request.e_string != null) continue;
-                    defer if (comptime Environment.allow_assert) bun.assert(request.e_string != null);
+                    if (request.e_string_2 != null) continue;
+                    defer if (comptime Environment.allow_assert) bun.assert(request.e_string_2 != null);
 
                     var k: usize = 0;
                     while (k < new_dependencies.len) : (k += 1) {
                         if (new_dependencies[k].key) |key| {
-                            if (!request.is_aliased and request.package_id != invalid_package_id and key.data.e_string.eql(
-                                string,
+                            if (!request.is_aliased and request.package_id != invalid_package_id and key.data.e_string_2.eqlSlice(
                                 manager.lockfile.packages.items(.name)[request.package_id].slice(request.version_buf),
                             )) {
                                 // This actually is a duplicate which we did not
@@ -8071,8 +8062,7 @@ pub const PackageManager = struct {
                                 }
                                 continue;
                             }
-                            if (key.data.e_string.eql(
-                                string,
+                            if (key.data.e_string_2.eqlSlice(
                                 if (request.is_aliased)
                                     request.name
                                 else
@@ -8098,17 +8088,17 @@ pub const PackageManager = struct {
                         if (new_dependencies[k].key == null) {
                             new_dependencies[k].key = JSAst.Expr.allocate(
                                 allocator,
-                                JSAst.E.String,
-                                .{ .data = try allocator.dupe(u8, request.getResolvedName(manager.lockfile)) },
+                                JSAst.E.String2,
+                                JSAst.E.String2.init(try allocator.dupe(u8, request.getResolvedName(manager.lockfile))),
                                 logger.Loc.Empty,
                             );
 
-                            new_dependencies[k].value = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
+                            new_dependencies[k].value = JSAst.Expr.allocate(allocator, JSAst.E.String2, JSAst.E.String2.init(
                                 // we set it later
-                                .data = "",
-                            }, logger.Loc.Empty);
+                                "",
+                            ), logger.Loc.Empty);
 
-                            request.e_string = new_dependencies[k].value.?.data.e_string;
+                            request.e_string_2 = new_dependencies[k].value.?.data.e_string_2;
 
                             if (request.is_aliased) continue :outer;
                         }
@@ -8162,17 +8152,17 @@ pub const PackageManager = struct {
                 if (current_package_json.data != .e_object or current_package_json.data.e_object.properties.len == 0) {
                     var root_properties = try allocator.alloc(JSAst.G.Property, if (options.add_trusted_dependencies) 2 else 1);
                     root_properties[0] = JSAst.G.Property{
-                        .key = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
-                            .data = dependency_list,
-                        }, logger.Loc.Empty),
+                        .key = JSAst.Expr.allocate(allocator, JSAst.E.String2, JSAst.E.String2.init(
+                            dependency_list,
+                        ), logger.Loc.Empty),
                         .value = dependencies_object,
                     };
 
                     if (options.add_trusted_dependencies) {
                         root_properties[1] = JSAst.G.Property{
-                            .key = Expr.allocate(allocator, E.String, .{
-                                .data = trusted_dependencies_string,
-                            }, logger.Loc.Empty),
+                            .key = Expr.allocate(allocator, E.String2, E.String2.init(
+                                trusted_dependencies_string,
+                            ), logger.Loc.Empty),
                             .value = trusted_dependencies_array,
                         };
                     }
@@ -8185,15 +8175,15 @@ pub const PackageManager = struct {
                         var root_properties = try allocator.alloc(G.Property, current_package_json.data.e_object.properties.len + 2);
                         @memcpy(root_properties[0..current_package_json.data.e_object.properties.len], current_package_json.data.e_object.properties.slice());
                         root_properties[root_properties.len - 2] = .{
-                            .key = Expr.allocate(allocator, E.String, E.String{
-                                .data = dependency_list,
-                            }, logger.Loc.Empty),
+                            .key = Expr.allocate(allocator, E.String2, E.String2.init(
+                                dependency_list,
+                            ), logger.Loc.Empty),
                             .value = dependencies_object,
                         };
                         root_properties[root_properties.len - 1] = .{
-                            .key = Expr.allocate(allocator, E.String, .{
-                                .data = trusted_dependencies_string,
-                            }, logger.Loc.Empty),
+                            .key = Expr.allocate(allocator, E.String2, E.String2.init(
+                                trusted_dependencies_string,
+                            ), logger.Loc.Empty),
                             .value = trusted_dependencies_array,
                         };
                         current_package_json.* = Expr.allocate(allocator, E.Object, .{
@@ -8203,9 +8193,9 @@ pub const PackageManager = struct {
                         var root_properties = try allocator.alloc(JSAst.G.Property, current_package_json.data.e_object.properties.len + 1);
                         @memcpy(root_properties[0..current_package_json.data.e_object.properties.len], current_package_json.data.e_object.properties.slice());
                         root_properties[root_properties.len - 1] = .{
-                            .key = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
-                                .data = if (needs_new_dependency_list) dependency_list else trusted_dependencies_string,
-                            }, logger.Loc.Empty),
+                            .key = JSAst.Expr.allocate(allocator, JSAst.E.String2, JSAst.E.String2.init(
+                                if (needs_new_dependency_list) dependency_list else trusted_dependencies_string,
+                            ), logger.Loc.Empty),
                             .value = if (needs_new_dependency_list) dependencies_object else trusted_dependencies_array,
                         };
                         current_package_json.* = JSAst.Expr.allocate(allocator, JSAst.E.Object, .{
@@ -8217,26 +8207,26 @@ pub const PackageManager = struct {
 
             const resolutions = if (!options.before_install) manager.lockfile.packages.items(.resolution) else &.{};
             for (updates) |*request| {
-                if (request.e_string) |e_string| {
+                if (request.e_string_2) |e_string| {
                     if (request.package_id >= resolutions.len or resolutions[request.package_id].tag == .uninitialized) {
-                        e_string.data = uninitialized: {
+                        e_string.* = E.String2.init(uninitialized: {
                             if (manager.subcommand == .update and manager.options.do.update_to_latest) {
                                 break :uninitialized try allocator.dupe(u8, "latest");
                             }
 
-                            if (manager.subcommand != .update or !options.before_install or e_string.isBlank() or request.version.tag == .npm) {
+                            if (manager.subcommand != .update or !options.before_install or e_string.isEmpty() or request.version.tag == .npm) {
                                 break :uninitialized switch (request.version.tag) {
                                     .uninitialized => try allocator.dupe(u8, "latest"),
                                     else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
                                 };
                             } else {
-                                break :uninitialized e_string.data;
+                                break :uninitialized e_string.asWtf8JSON();
                             }
-                        };
+                        });
 
                         continue;
                     }
-                    e_string.data = switch (resolutions[request.package_id].tag) {
+                    e_string.* = E.String2.init(switch (resolutions[request.package_id].tag) {
                         .npm => npm: {
                             if (manager.subcommand == .update and (request.version.tag == .dist_tag or request.version.tag == .npm)) {
                                 if (manager.updating_packages.fetchSwapRemove(request.name)) |entry| {
@@ -8311,7 +8301,7 @@ pub const PackageManager = struct {
 
                         .workspace => try allocator.dupe(u8, "workspace:*"),
                         else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
-                    };
+                    });
                 }
             }
         }
@@ -9968,7 +9958,7 @@ pub const PackageManager = struct {
         is_aliased: bool = false,
         failed: bool = false,
         // This must be cloned to handle when the AST store resets
-        e_string: ?*JSAst.E.String = null,
+        e_string_2: ?*JSAst.E.String2 = null,
 
         pub const Array = std.ArrayListUnmanaged(UpdateRequest);
 
@@ -10482,8 +10472,8 @@ pub const PackageManager = struct {
                                 var i: usize = 0;
                                 var new_len = dependencies.len;
                                 while (i < dependencies.len) : (i += 1) {
-                                    if (dependencies[i].key.?.data == .e_string) {
-                                        if (dependencies[i].key.?.data.e_string.eql(string, request.name)) {
+                                    if (dependencies[i].key.?.data == .e_string_2) {
+                                        if (dependencies[i].key.?.data.e_string_2.eqlSlice(request.name)) {
                                             if (new_len > 1) {
                                                 dependencies[i] = dependencies[new_len - 1];
                                                 new_len -= 1;

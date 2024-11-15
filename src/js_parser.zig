@@ -206,49 +206,6 @@ const Substitution = union(enum) {
     continue_: Expr,
 };
 
-/// Concatenate two `E.String`s, mutating BOTH inputs
-/// unless `has_inlined_enum_poison` is set.
-///
-/// Currently inlined enum poison refers to where mutation would cause output
-/// bugs due to inlined enum values sharing `E.String`s. If a new use case
-/// besides inlined enums comes up to set this to true, please rename the
-/// variable and document it.
-fn joinStrings(left: *const E.String, right: *const E.String, has_inlined_enum_poison: bool) E.String {
-    var new = if (has_inlined_enum_poison)
-        // Inlined enums can be shared by multiple call sites. In
-        // this case, we need to ensure that the ENTIRE rope is
-        // cloned. In other situations, the lhs doesn't have any
-        // other owner, so it is fine to mutate `lhs.data.end.next`.
-        //
-        // Consider the following case:
-        //   const enum A {
-        //     B = "a" + "b",
-        //     D = B + "d",
-        //   };
-        //   console.log(A.B, A.D);
-        left.cloneRopeNodes()
-    else
-        left.*;
-
-    // Similarly, the right side has to be cloned for an enum rope too.
-    //
-    // Consider the following case:
-    //   const enum A {
-    //     B = "1" + "2",
-    //     C = ("3" + B) + "4",
-    //   };
-    //   console.log(A.B, A.C);
-    const rhs_clone = Expr.Data.Store.append(E.String, if (has_inlined_enum_poison)
-        right.cloneRopeNodes()
-    else
-        right.*);
-
-    new.push(rhs_clone);
-    new.prefer_template = new.prefer_template or rhs_clone.prefer_template;
-
-    return new;
-}
-
 /// Transforming the left operand into a string is not safe if it comes from a
 /// nested AST node.
 const FoldStringAdditionKind = enum {
@@ -271,7 +228,7 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
     if (kind != .nested_left) {
         // See comment on `FoldStringAdditionKind` for examples
         switch (rhs.data) {
-            .e_string, .e_template => {
+            .e_string_2, .e_template => {
                 if (lhs.toStringExprWithoutSideEffects(allocator)) |str| {
                     lhs = str;
                 }
@@ -281,37 +238,29 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
     }
 
     switch (lhs.data) {
-        .e_string => |left| {
+        .e_string_2 => |left| {
             if (rhs.toStringExprWithoutSideEffects(allocator)) |str| {
                 rhs = str;
             }
 
-            if (left.isUTF8()) {
+            if (left.isAsciiOnly()) {
                 switch (rhs.data) {
                     // "bar" + "baz" => "barbaz"
-                    .e_string => |right| {
-                        if (right.isUTF8()) {
+                    .e_string_2 => |right| {
+                        if (right.isAsciiOnly()) {
                             const has_inlined_enum_poison =
                                 l.data == .e_inlined_enum or
                                 r.data == .e_inlined_enum;
 
-                            return Expr.init(E.String, joinStrings(
-                                left,
-                                right,
-                                has_inlined_enum_poison,
-                            ), lhs.loc);
+                            return Expr.init(E.String2, left.concat(right, !has_inlined_enum_poison, allocator), l.loc);
                         }
                     },
                     // "bar" + `baz${bar}` => `barbaz${bar}`
                     .e_template => |right| {
-                        if (right.head.isUTF8()) {
+                        if (right.head == .cooked and right.head.cooked.isAsciiOnly()) {
                             return Expr.init(E.Template, E.Template{
                                 .parts = right.parts,
-                                .head = .{ .cooked = joinStrings(
-                                    left,
-                                    &right.head.cooked,
-                                    l.data == .e_inlined_enum,
-                                ) },
+                                .head = .{ .cooked = left.concat(&right.head.cooked, l.data != .e_inlined_enum, allocator) },
                             }, l.loc);
                         }
                     },
@@ -324,7 +273,7 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                 if (rhs.data == .e_template and rhs.data.e_template.tag == null) {}
             }
 
-            if (left.len() == 0 and rhs.knownPrimitive() == .string) {
+            if (left.isEmpty() and rhs.knownPrimitive() == .string) {
                 return rhs;
             }
 
@@ -340,31 +289,23 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
             if (left.tag == null) {
                 switch (rhs.data) {
                     // `foo${bar}` + "baz" => `foo${bar}baz`
-                    .e_string => |right| {
-                        if (right.isUTF8()) {
+                    .e_string_2 => |right| {
+                        if (right.isAsciiOnly()) {
                             // Mutation of this node is fine because it will be not
                             // be shared by other places. Note that e_template will
                             // be treated by enums as strings, but will not be
                             // inlined unless they could be converted into
-                            // .e_string.
+                            // .e_string_2.
                             if (left.parts.len > 0) {
                                 const i = left.parts.len - 1;
                                 const last = left.parts[i];
-                                if (last.tail.isUTF8()) {
-                                    left.parts[i].tail = .{ .cooked = joinStrings(
-                                        &last.tail.cooked,
-                                        right,
-                                        r.data == .e_inlined_enum,
-                                    ) };
+                                if (last.tail == .cooked and last.tail.cooked.isAsciiOnly()) {
+                                    left.parts[i].tail = .{ .cooked = last.tail.cooked.concat(right, r.data != .e_inlined_enum, allocator) };
                                     return lhs;
                                 }
                             } else {
-                                if (left.head.isUTF8()) {
-                                    left.head = .{ .cooked = joinStrings(
-                                        &left.head.cooked,
-                                        right,
-                                        r.data == .e_inlined_enum,
-                                    ) };
+                                if (left.head == .cooked and left.head.cooked.isAsciiOnly()) {
+                                    left.head = .{ .cooked = left.head.cooked.concat(right, r.data != .e_inlined_enum, allocator) };
                                     return lhs;
                                 }
                             }
@@ -372,16 +313,12 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                     },
                     // `foo${bar}` + `a${hi}b` => `foo${bar}a${hi}b`
                     .e_template => |right| {
-                        if (right.tag == null and right.head.isUTF8()) {
+                        if (right.tag == null and right.head == .cooked and right.head.cooked.isAsciiOnly()) {
                             if (left.parts.len > 0) {
                                 const i = left.parts.len - 1;
                                 const last = left.parts[i];
-                                if (last.tail.isUTF8() and right.head.isUTF8()) {
-                                    left.parts[i].tail = .{ .cooked = joinStrings(
-                                        &last.tail.cooked,
-                                        &right.head.cooked,
-                                        r.data == .e_inlined_enum,
-                                    ) };
+                                if (last.tail == .cooked and last.tail.cooked.isAsciiOnly() and right.head == .cooked and right.head.cooked.isAsciiOnly()) {
+                                    left.parts[i].tail = .{ .cooked = last.tail.cooked.concat(&right.head.cooked, r.data != .e_inlined_enum, allocator) };
 
                                     left.parts = if (right.parts.len == 0)
                                         left.parts
@@ -394,12 +331,8 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                     return lhs;
                                 }
                             } else {
-                                if (left.head.isUTF8() and right.head.isUTF8()) {
-                                    left.head = .{ .cooked = joinStrings(
-                                        &left.head.cooked,
-                                        &right.head.cooked,
-                                        r.data == .e_inlined_enum,
-                                    ) };
+                                if (left.head == .cooked and left.head.cooked.isAsciiOnly() and right.head == .cooked and right.head.cooked.isAsciiOnly()) {
+                                    left.head = .{ .cooked = left.head.cooked.concat(&right.head.cooked, r.data != .e_inlined_enum, allocator) };
                                     left.parts = right.parts;
                                     return lhs;
                                 }
@@ -418,8 +351,8 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
         },
     }
 
-    if (rhs.data.as(.e_string)) |right| {
-        if (right.len() == 0 and lhs.knownPrimitive() == .string) {
+    if (rhs.data.as(.e_string_2)) |right| {
+        if (right.isEmpty() and lhs.knownPrimitive() == .string) {
             return lhs;
         }
     }
@@ -556,9 +489,7 @@ const JSXTag = struct {
         // <Hello-:Button
         if (strings.containsComptime(name, "-:") or (p.lexer.token != .t_dot and name[0] >= 'a' and name[0] <= 'z')) {
             return JSXTag{
-                .data = Data{ .tag = p.newExpr(E.String{
-                    .data = name,
-                }, loc) },
+                .data = Data{ .tag = p.newExpr(E.String2.init(name), loc) },
                 .range = tag_range,
                 .name = name,
             };
@@ -1647,7 +1578,7 @@ pub const SideEffects = enum(u1) {
         return switch (data) {
             .e_null,
             .e_undefined,
-            .e_string,
+            .e_string_2,
             .e_boolean,
             .e_number,
             .e_big_int,
@@ -1667,7 +1598,7 @@ pub const SideEffects = enum(u1) {
             .e_boolean,
             .e_number,
             .e_big_int,
-            .e_string,
+            .e_string_2,
             .e_this,
             .e_reg_exp,
             .e_function,
@@ -1835,7 +1766,7 @@ pub const SideEffects = enum(u1) {
                                 E.Binary{
                                     .op = .bin_add,
                                     .left = prop.key.?,
-                                    .right = p.newExpr(E.String{}, prop.key.?.loc),
+                                    .right = p.newExpr(E.String2.init(""), prop.key.?.loc),
                                 },
                                 prop.key.?.loc,
                             ),
@@ -2059,7 +1990,7 @@ pub const SideEffects = enum(u1) {
             .e_boolean,
             .e_number,
             .e_big_int,
-            .e_string,
+            .e_string_2,
             .e_inlined_enum,
             => {
                 return true;
@@ -2163,7 +2094,7 @@ pub const SideEffects = enum(u1) {
         }
         switch (exp) {
             // Never null or undefined
-            .e_boolean, .e_number, .e_string, .e_reg_exp, .e_function, .e_arrow, .e_big_int => {
+            .e_boolean, .e_number, .e_string_2, .e_reg_exp, .e_function, .e_arrow, .e_big_int => {
                 return Result{ .value = false, .side_effects = .no_side_effects, .ok = true };
             },
 
@@ -2283,8 +2214,8 @@ pub const SideEffects = enum(u1) {
             .e_big_int => |e| {
                 return Result{ .ok = true, .value = !strings.eqlComptime(e.value, "0"), .side_effects = .no_side_effects };
             },
-            .e_string => |e| {
-                return Result{ .ok = true, .value = e.isPresent(), .side_effects = .no_side_effects };
+            .e_string_2 => |e| {
+                return Result{ .ok = true, .value = !e.isEmpty(), .side_effects = .no_side_effects };
             },
             .e_function, .e_arrow, .e_reg_exp => {
                 return Result{ .ok = true, .value = true, .side_effects = .no_side_effects };
@@ -3516,9 +3447,7 @@ pub const Parser = struct {
                     decls[0] = .{
                         .binding = p.b(B.Identifier{ .ref = p.dirname_ref }, logger.Loc.Empty),
                         .value = p.newExpr(
-                            E.String{
-                                .data = p.source.path.name.dir,
-                            },
+                            E.String2.init(p.source.path.name.dir),
                             logger.Loc.Empty,
                         ),
                     };
@@ -3528,9 +3457,7 @@ pub const Parser = struct {
                     decls[@as(usize, @intFromBool(uses_dirname))] = .{
                         .binding = p.b(B.Identifier{ .ref = p.filename_ref }, logger.Loc.Empty),
                         .value = p.newExpr(
-                            E.String{
-                                .data = p.source.path.text,
-                            },
+                            E.String2.init(p.source.path.text),
                             logger.Loc.Empty,
                         ),
                     };
@@ -4333,13 +4260,11 @@ pub const Prefill = struct {
         pub var DebugDisabled = [_]Expr{
             Expr{ .data = .{ .e_boolean = E.Boolean{ .value = false } }, .loc = logger.Loc.Empty },
         };
-        pub var ActivateString = E.String{
-            .data = "activate",
-        };
+        pub var ActivateString = E.String2.init("activate");
         pub var ActivateIndex = E.Index{
             .index = .{
                 .data = .{
-                    .e_string = &ActivateString,
+                    .e_string_2 = &ActivateString,
                 },
                 .loc = logger.Loc.Empty,
             },
@@ -4358,18 +4283,18 @@ pub const Prefill = struct {
         pub const Zero = E.Number{ .value = 0.0 };
     };
     pub const String = struct {
-        pub var Key = E.String{ .data = &Prefill.StringLiteral.Key };
-        pub var Children = E.String{ .data = &Prefill.StringLiteral.Children };
-        pub var Filename = E.String{ .data = &Prefill.StringLiteral.Filename };
-        pub var LineNumber = E.String{ .data = &Prefill.StringLiteral.LineNumber };
-        pub var ColumnNumber = E.String{ .data = &Prefill.StringLiteral.ColumnNumber };
+        pub var Key = E.String2.init(&Prefill.StringLiteral.Key);
+        pub var Children = E.String2.init(&Prefill.StringLiteral.Children);
+        pub var Filename = E.String2.init(&Prefill.StringLiteral.Filename);
+        pub var LineNumber = E.String2.init(&Prefill.StringLiteral.LineNumber);
+        pub var ColumnNumber = E.String2.init(&Prefill.StringLiteral.ColumnNumber);
 
-        pub var @"$$typeof" = E.String{ .data = "$$typeof" };
-        pub var @"type" = E.String{ .data = "type" };
-        pub var ref = E.String{ .data = "ref" };
-        pub var props = E.String{ .data = "props" };
-        pub var _owner = E.String{ .data = "_owner" };
-        pub var REACT_ELEMENT_TYPE = E.String{ .data = "react.element" };
+        pub var @"$$typeof" = E.String2.init("$$typeof");
+        pub var @"type" = E.String2.init("type");
+        pub var ref = E.String2.init("ref");
+        pub var props = E.String2.init("props");
+        pub var _owner = E.String2.init("_owner");
+        pub var REACT_ELEMENT_TYPE = E.String2.init("react.element");
     };
     pub const Data = struct {
         pub var BMissing = B{ .b_missing = BMissing_ };
@@ -4381,16 +4306,16 @@ pub const Prefill = struct {
         pub var SEmpty = Stmt.Data{ .s_empty = SEmpty_ };
         pub var SEmpty_ = S.Empty{};
 
-        pub var Filename = Expr.Data{ .e_string = &Prefill.String.Filename };
-        pub var LineNumber = Expr.Data{ .e_string = &Prefill.String.LineNumber };
-        pub var ColumnNumber = Expr.Data{ .e_string = &Prefill.String.ColumnNumber };
-        pub var @"$$typeof" = Expr.Data{ .e_string = &Prefill.String.@"$$typeof" };
-        pub var key = Expr.Data{ .e_string = &Prefill.String.Key };
-        pub var @"type" = Expr.Data{ .e_string = &Prefill.String.type };
-        pub var ref = Expr.Data{ .e_string = &Prefill.String.ref };
-        pub var props = Expr.Data{ .e_string = &Prefill.String.props };
-        pub var _owner = Expr.Data{ .e_string = &Prefill.String._owner };
-        pub var REACT_ELEMENT_TYPE = Expr.Data{ .e_string = &Prefill.String.REACT_ELEMENT_TYPE };
+        pub var Filename = Expr.Data{ .e_string_2 = &Prefill.String.Filename };
+        pub var LineNumber = Expr.Data{ .e_string_2 = &Prefill.String.LineNumber };
+        pub var ColumnNumber = Expr.Data{ .e_string_2 = &Prefill.String.ColumnNumber };
+        pub var @"$$typeof" = Expr.Data{ .e_string_2 = &Prefill.String.@"$$typeof" };
+        pub var key = Expr.Data{ .e_string_2 = &Prefill.String.Key };
+        pub var @"type" = Expr.Data{ .e_string_2 = &Prefill.String.type };
+        pub var ref = Expr.Data{ .e_string_2 = &Prefill.String.ref };
+        pub var props = Expr.Data{ .e_string_2 = &Prefill.String.props };
+        pub var _owner = Expr.Data{ .e_string_2 = &Prefill.String._owner };
+        pub var REACT_ELEMENT_TYPE = Expr.Data{ .e_string_2 = &Prefill.String.REACT_ELEMENT_TYPE };
         pub const This = Expr.Data{ .e_this = E.This{} };
         pub const Zero = Expr.Data{ .e_number = Value.Zero };
     };
@@ -4407,8 +4332,8 @@ const ReactJSX = struct {
     hoisted_elements: std.ArrayHashMapUnmanaged(Ref, G.Decl, bun.ArrayIdentityContext, false) = .{},
 };
 
-var keyExprData = Expr.Data{ .e_string = &Prefill.String.Key };
-var jsxChildrenKeyData = Expr.Data{ .e_string = &Prefill.String.Children };
+var keyExprData = Expr.Data{ .e_string_2 = &Prefill.String.Key };
+var jsxChildrenKeyData = Expr.Data{ .e_string_2 = &Prefill.String.Children };
 var nullExprValueData = E.Null{};
 var falseExprValueData = E.Boolean{ .value = false };
 var nullValueExpr = Expr.Data{ .e_null = nullExprValueData };
@@ -5168,7 +5093,7 @@ fn NewParser_(
 
         pub fn transposeImport(p: *P, arg: Expr, state: *const TransposeState) Expr {
             // The argument must be a string
-            if (arg.data.as(.e_string)) |str| {
+            if (arg.data.as(.e_string_2)) |str| {
                 // Ignore calls to import() if the control flow is provably dead here.
                 // We don't want to spend time scanning the required files if they will
                 // never be used.
@@ -5176,7 +5101,7 @@ fn NewParser_(
                     return p.newExpr(E.Null{}, arg.loc);
                 }
 
-                const import_record_index = p.addImportRecord(.dynamic, arg.loc, str.slice(p.allocator));
+                const import_record_index = p.addImportRecord(.dynamic, arg.loc, str.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory());
 
                 if (state.import_record_tag) |tag| {
                     p.import_records.items[import_record_index].tag = tag;
@@ -5207,7 +5132,7 @@ fn NewParser_(
 
         pub fn transposeRequireResolve(p: *P, arg: Expr, require_resolve_ref: Expr) Expr {
             // The argument must be a string
-            if (arg.data == .e_string) {
+            if (arg.data == .e_string_2) {
                 return p.transposeRequireResolveKnownString(arg);
             }
 
@@ -5227,7 +5152,7 @@ fn NewParser_(
         }
 
         pub inline fn transposeRequireResolveKnownString(p: *P, arg: Expr) Expr {
-            bun.assert(arg.data == .e_string);
+            bun.assert(arg.data == .e_string_2);
 
             // Ignore calls to import() if the control flow is provably dead here.
             // We don't want to spend time scanning the required files if they will
@@ -5236,7 +5161,7 @@ fn NewParser_(
                 return p.newExpr(E.Null{}, arg.loc);
             }
 
-            const import_record_index = p.addImportRecord(.require_resolve, arg.loc, arg.data.e_string.string(p.allocator) catch unreachable);
+            const import_record_index = p.addImportRecord(.require_resolve, arg.loc, arg.data.e_string_2.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory());
             p.import_records.items[import_record_index].handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
             p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
 
@@ -5263,7 +5188,7 @@ fn NewParser_(
             }
 
             switch (arg.data) {
-                .e_string => |str| {
+                .e_string_2 => |str| {
                     // Ignore calls to require() if the control flow is provably dead here.
                     // We don't want to spend time scanning the required files if they will
                     // never be used.
@@ -5271,8 +5196,7 @@ fn NewParser_(
                         return Expr{ .data = nullExprData, .loc = arg.loc };
                     }
 
-                    str.resolveRopeIfNeeded(p.allocator);
-                    const pathname = str.string(p.allocator) catch unreachable;
+                    const pathname = str.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory();
                     const path = fs.Path.init(pathname);
 
                     const handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
@@ -5552,8 +5476,8 @@ fn NewParser_(
                     //     switch (call.target.data) {
                     //         .e_identifier => |ident| {
                     //             // is this a require("something")
-                    //             if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args[0].data) == .e_string) {
-                    //                 _ = p.addImportRecord(.require, loc, call.args[0].data.e_string.string(p.allocator) catch unreachable);
+                    //             if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args[0].data) == .e_string_2) {
+                    //                 _ = p.addImportRecord(.require, loc, call.args[0].data.e_string_2.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory());
                     //             }
                     //         },
                     //         else => {},
@@ -5640,8 +5564,8 @@ fn NewParser_(
                         switch (call.target.data) {
                             .e_identifier => |ident| {
                                 // is this a require("something")
-                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string) {
-                                    _ = p.addImportRecord(.require, loc, call.args.first_().data.e_string.string(p.allocator) catch unreachable);
+                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string_2) {
+                                    _ = p.addImportRecord(.require, loc, call.args.first_().data.e_string_2.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory());
                                 }
                             },
                             else => {},
@@ -5656,8 +5580,8 @@ fn NewParser_(
                         switch (call.target.data) {
                             .e_identifier => |ident| {
                                 // is this a require("something")
-                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string) {
-                                    _ = p.addImportRecord(.require, loc, call.args.first_().data.e_string.string(p.allocator) catch unreachable);
+                                if (strings.eqlComptime(p.loadNameFromRef(ident.ref), "require") and call.args.len == 1 and std.meta.activeTag(call.args.ptr[0].data) == .e_string_2) {
+                                    _ = p.addImportRecord(.require, loc, call.args.first_().data.e_string_2.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory());
                                 }
                             },
                             else => {},
@@ -5866,8 +5790,8 @@ fn NewParser_(
 
         fn keyNameForError(p: *P, key: js_ast.Expr) string {
             switch (key.data) {
-                .e_string => {
-                    return key.data.e_string.string(p.allocator) catch unreachable;
+                .e_string_2 => {
+                    return key.data.e_string_2.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory();
                 },
                 .e_private_identifier => |private| {
                     return p.loadNameFromRef(private.ref);
@@ -5911,7 +5835,7 @@ fn NewParser_(
                                     ),
 
                                     .enum_string => |str| return p.wrapInlinedEnum(
-                                        .{ .loc = loc, .data = .{ .e_string = str } },
+                                        .{ .loc = loc, .data = .{ .e_string_2 = str } },
                                         p.symbols.items[ref.inner_index].original_name,
                                     ),
 
@@ -5959,7 +5883,7 @@ fn NewParser_(
                         ),
 
                         .enum_string => |str| return p.wrapInlinedEnum(
-                            .{ .loc = loc, .data = .{ .e_string = str } },
+                            .{ .loc = loc, .data = .{ .e_string_2 = str } },
                             p.symbols.items[ref.inner_index].original_name,
                         ),
 
@@ -6160,7 +6084,7 @@ fn NewParser_(
             for (clauses) |entry| {
                 if (entry.enabled) {
                     items.appendAssumeCapacity(if (hot_module_reloading) .{
-                        .key = p.newExpr(E.String{ .data = entry.name }, logger.Loc.Empty),
+                        .key = p.newExpr(E.String2.init(entry.name), logger.Loc.Empty),
                         .value = p.b(B.Identifier{ .ref = entry.ref }, logger.Loc.Empty),
                     } else .{
                         .alias = entry.name,
@@ -11109,15 +11033,13 @@ fn NewParser_(
             // The alias may now be a utf-16 (not wtf-16) string (see https://github.com/tc39/ecma262/pull/2154)
             if (p.lexer.token == .t_string_literal) {
                 var estr = try p.lexer.toEString();
-                if (estr.isUTF8()) {
-                    return estr.slice8();
-                } else if (strings.toUTF8AllocWithTypeWithoutInvalidSurrogatePairs(p.lexer.allocator, []const u16, estr.slice16())) |alias_utf8| {
-                    return alias_utf8;
-                } else |err| {
+                const result = try estr.toWtf8MayAlloc(p.lexer.allocator);
+                if (!strings.isValidUTF8(result)) {
                     const r = p.source.rangeOfString(loc);
-                    try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Invalid {s} alias because it contains an unpaired Unicode surrogate ({s})", .{ kind, @errorName(err) });
+                    try p.log.addRangeErrorFmt(p.source, r, p.allocator, "Invalid {s} alias because it contains an unpaired Unicode surrogate", .{kind});
                     return p.source.textForRange(r);
                 }
+                return result;
             }
 
             // The alias may be a keyword
@@ -11667,7 +11589,7 @@ fn NewParser_(
 
                     try p.lexer.next();
 
-                    key = p.newExpr(E.String{ .data = name }, loc);
+                    key = p.newExpr(E.String2.init(name), loc);
 
                     if (p.lexer.token != .t_colon and p.lexer.token != .t_open_paren) {
                         const ref = p.storeNameInRef(name) catch unreachable;
@@ -11789,7 +11711,7 @@ fn NewParser_(
 
                 // Parse the name
                 if (p.lexer.token == .t_string_literal) {
-                    value.name = (try p.lexer.toUTF8EString()).slice8();
+                    value.name = (try p.lexer.toUTF8EString()).asWtf8JSON();
                     needs_symbol = js_lexer.isIdentifier(value.name);
                 } else if (p.lexer.isIdentifierOrKeyword()) {
                     value.name = p.lexer.identifier;
@@ -12141,7 +12063,7 @@ fn NewParser_(
             const path_text = try p.lexer.toUTF8EString();
             var path = ParsedPath{
                 .loc = p.lexer.loc(),
-                .text = path_text.slice8(),
+                .text = path_text.asWtf8JSON(),
                 .is_macro = false,
                 .import_tag = .none,
             };
@@ -12181,7 +12103,7 @@ fn NewParser_(
                                 }
                             }
                         } else if (p.lexer.token == .t_string_literal) {
-                            const string_literal_text = (try p.lexer.toUTF8EString()).slice8();
+                            const string_literal_text = (try p.lexer.toUTF8EString()).asWtf8JSON();
                             inline for (comptime std.enums.values(SupportedAttribute)) |t| {
                                 if (strings.eqlComptime(string_literal_text, @tagName(t))) {
                                     break :brk t;
@@ -12198,7 +12120,7 @@ fn NewParser_(
                     try p.lexer.expect(.t_colon);
 
                     try p.lexer.expect(.t_string_literal);
-                    const string_literal_text = (try p.lexer.toUTF8EString()).slice8();
+                    const string_literal_text = (try p.lexer.toUTF8EString()).asWtf8JSON();
                     if (supported_attribute) |attr| {
                         switch (attr) {
                             .type => {
@@ -12294,24 +12216,23 @@ fn NewParser_(
                     switch (stmt.data) {
                         .s_expr => |expr| {
                             switch (expr.value.data) {
-                                .e_string => |str| {
-                                    if (!str.prefer_template) {
-                                        isDirectivePrologue = true;
+                                .e_string_2 => |str| {
+                                    // TODO: previously, this would check str.prefer_template so that `use strict`; didn't count as a directive. bring this back.
+                                    isDirectivePrologue = true;
 
-                                        if (str.eqlComptime("use strict")) {
-                                            skip = true;
-                                            // Track "use strict" directives
-                                            p.current_scope.strict_mode = .explicit_strict_mode;
-                                            if (p.current_scope == p.module_scope)
-                                                p.module_scope_directive_loc = stmt.loc;
-                                        } else if (str.eqlComptime("use asm")) {
-                                            skip = true;
-                                            stmt.data = Prefill.Data.SEmpty;
-                                        } else {
-                                            stmt = Stmt.alloc(S.Directive, S.Directive{
-                                                .value = str.slice(p.allocator),
-                                            }, stmt.loc);
-                                        }
+                                    if (str.eqlComptime("use strict")) {
+                                        skip = true;
+                                        // Track "use strict" directives
+                                        p.current_scope.strict_mode = .explicit_strict_mode;
+                                        if (p.current_scope == p.module_scope)
+                                            p.module_scope_directive_loc = stmt.loc;
+                                    } else if (str.eqlComptime("use asm")) {
+                                        skip = true;
+                                        stmt.data = Prefill.Data.SEmpty;
+                                    } else {
+                                        stmt = Stmt.alloc(S.Directive, S.Directive{
+                                            .value = try str.toWtf8MayAlloc(p.allocator),
+                                        }, stmt.loc);
                                     }
                                 },
                                 else => {},
@@ -13332,7 +13253,7 @@ fn NewParser_(
                         return error.SyntaxError;
                     }
 
-                    key = p.newExpr(E.String{ .data = name }, name_range.loc);
+                    key = p.newExpr(E.String2.init(name), name_range.loc);
 
                     // Parse a shorthand property
                     const isShorthandProperty = !opts.is_class and
@@ -13423,7 +13344,7 @@ fn NewParser_(
                 // Forbid the names "constructor" and "prototype" in some cases
                 if (!is_computed) {
                     switch (key.data) {
-                        .e_string => |str| {
+                        .e_string_2 => |str| {
                             if (str.eqlComptime("constructor") or (opts.is_static and str.eqlComptime("prototype"))) {
                                 // TODO: fmt error message to include string value.
                                 p.log.addRangeError(p.source, key_range, "Invalid field name") catch unreachable;
@@ -13512,7 +13433,7 @@ fn NewParser_(
                 // Forbid the names "constructor" and "prototype" in some cases
                 if (opts.is_class and !is_computed) {
                     switch (key.data) {
-                        .e_string => |str| {
+                        .e_string_2 => |str| {
                             if (!opts.is_static and str.eqlComptime("constructor")) {
                                 if (kind == .get) {
                                     p.log.addRangeError(p.source, key_range, "Class constructor cannot be a getter") catch unreachable;
@@ -13714,7 +13635,7 @@ fn NewParser_(
                     // Forbid decorators on class constructors
                     if (opts.ts_decorators.len > 0) {
                         switch ((property.key orelse p.panic("Internal error: Expected property {any} to have a key.", .{property})).data) {
-                            .e_string => |str| {
+                            .e_string_2 => |str| {
                                 if (str.eqlComptime("constructor")) {
                                     p.log.addError(p.source, first_decorator_loc, "TypeScript does not allow decorators on class constructors") catch unreachable;
                                 }
@@ -13813,8 +13734,7 @@ fn NewParser_(
         // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
         pub fn parseStringLiteral(p: *P) anyerror!Expr {
             const loc = p.lexer.loc();
-            var str = try p.lexer.toEString();
-            str.prefer_template = p.lexer.token == .t_no_substitution_template_literal;
+            const str = try p.lexer.toEString();
 
             const expr = p.newExpr(str, loc);
             try p.lexer.next();
@@ -15458,8 +15378,8 @@ fn NewParser_(
             p.allow_in = old_allow_in;
 
             if (comptime only_scan_imports_and_do_not_visit) {
-                if (value.data == .e_string and value.data.e_string.isUTF8() and value.data.e_string.isPresent()) {
-                    const import_record_index = p.addImportRecord(.dynamic, value.loc, value.data.e_string.slice(p.allocator));
+                if (value.data == .e_string_2 and !value.data.e_string_2.isEmpty()) {
+                    const import_record_index = p.addImportRecord(.dynamic, value.loc, try value.data.e_string_2.toWtf8MayAlloc(p.allocator));
 
                     return p.newExpr(E.Import{
                         .expr = value,
@@ -15548,7 +15468,7 @@ fn NewParser_(
                                 key_prop_i = i;
                             }
 
-                            const prop_name = p.newExpr(E.String{ .data = prop_name_literal }, key_range.loc);
+                            const prop_name = p.newExpr(E.String2.init(prop_name_literal), key_range.loc);
 
                             // Parse the value
                             var value: Expr = undefined;
@@ -15588,19 +15508,19 @@ fn NewParser_(
                                     const key = brk: {
                                         switch (expr.data) {
                                             .e_import_identifier => |ident| {
-                                                break :brk p.newExpr(E.String{ .data = p.loadNameFromRef(ident.ref) }, expr.loc);
+                                                break :brk p.newExpr(E.String2.init(p.loadNameFromRef(ident.ref)), expr.loc);
                                             },
                                             .e_commonjs_export_identifier => |ident| {
-                                                break :brk p.newExpr(E.String{ .data = p.loadNameFromRef(ident.ref) }, expr.loc);
+                                                break :brk p.newExpr(E.String2.init(p.loadNameFromRef(ident.ref)), expr.loc);
                                             },
                                             .e_identifier => |ident| {
-                                                break :brk p.newExpr(E.String{ .data = p.loadNameFromRef(ident.ref) }, expr.loc);
+                                                break :brk p.newExpr(E.String2.init(p.loadNameFromRef(ident.ref)), expr.loc);
                                             },
                                             .e_dot => |dot| {
-                                                break :brk p.newExpr(E.String{ .data = dot.name }, dot.name_loc);
+                                                break :brk p.newExpr(E.String2.init(dot.name), dot.name_loc);
                                             },
                                             .e_index => |index| {
-                                                if (index.index.data == .e_string) {
+                                                if (index.index.data == .e_string_2) {
                                                     break :brk index.index;
                                                 }
                                             },
@@ -16166,7 +16086,7 @@ fn NewParser_(
                     //     p.log.addRangeError(p.source, target.range, "Cannot use \"new.target\" here") catch unreachable;
                     // }
                 },
-                .e_string => {
+                .e_string_2 => {
 
                     // If you're using this, you're probably not using 0-prefixed legacy octal notation
                     // if e.LegacyOctalLoc.Start > 0 {
@@ -16629,13 +16549,12 @@ fn NewParser_(
 
                     // "a['b']" => "a.b"
                     if (p.options.features.minify_syntax and
-                        e_.index.data == .e_string and
-                        e_.index.data.e_string.isUTF8() and
-                        e_.index.data.e_string.isIdentifier(p.allocator))
+                        e_.index.data == .e_string_2 and
+                        bun.js_lexer.isIdentifier(e_.index.data.e_string_2.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory()))
                     {
                         const dot = p.newExpr(
                             E.Dot{
-                                .name = e_.index.data.e_string.slice(p.allocator),
+                                .name = e_.index.data.e_string_2.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory(),
                                 .name_loc = e_.index.loc,
                                 .target = e_.target,
                                 .optional_chain = e_.optional_chain,
@@ -16692,17 +16611,16 @@ fn NewParser_(
                             e_.index = index;
 
                             const unwrapped = e_.index.unwrapInlined();
-                            if (unwrapped.data == .e_string and
-                                unwrapped.data.e_string.isUTF8())
-                            {
+                            if (unwrapped.data == .e_string_2) {
+                                const str_val = unwrapped.data.e_string_2.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory();
                                 // "a['b' + '']" => "a.b"
                                 // "enum A { B = 'b' }; a[A.B]" => "a.b"
                                 if (p.options.features.minify_syntax and
-                                    unwrapped.data.e_string.isIdentifier(p.allocator))
+                                    js_lexer.isIdentifier(str_val))
                                 {
                                     const dot = p.newExpr(
                                         E.Dot{
-                                            .name = unwrapped.data.e_string.slice(p.allocator),
+                                            .name = str_val,
                                             .name_loc = unwrapped.loc,
                                             .target = e_.target,
                                             .optional_chain = e_.optional_chain,
@@ -16728,7 +16646,7 @@ fn NewParser_(
                                 if (p.maybeRewritePropertyAccess(
                                     expr.loc,
                                     e_.target,
-                                    unwrapped.data.e_string.data,
+                                    str_val,
                                     unwrapped.loc,
                                     .{
                                         .is_call_target = is_call_target,
@@ -16753,15 +16671,15 @@ fn NewParser_(
                                 @mod(number.value, 1) == 0)
                             {
                                 // "foo"[2] -> "o"
-                                if (target.data.as(.e_string)) |str| {
-                                    if (str.isUTF8()) {
-                                        const literal = str.slice(p.allocator);
+                                if (target.data.as(.e_string_2)) |str| {
+                                    if (str.isAsciiOnly()) {
+                                        const literal = str.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory();
                                         const num: usize = index.data.e_number.toUsize();
                                         if (Environment.allow_assert) {
                                             bun.assert(bun.strings.isAllASCII(literal));
                                         }
                                         if (num < literal.len) {
-                                            return p.newExpr(E.String{ .data = literal[num .. num + 1] }, expr.loc);
+                                            return p.newExpr(E.String2.init(literal[num .. num + 1]), expr.loc);
                                         }
                                     }
                                 } else if (target.data.as(.e_array)) |array| {
@@ -16825,11 +16743,11 @@ fn NewParser_(
 
                             if (e_.value.data == .e_require_call_target) {
                                 p.ignoreUsageOfRuntimeRequire();
-                                return p.newExpr(E.String{ .data = "function" }, expr.loc);
+                                return p.newExpr(E.String2.init("function"), expr.loc);
                             }
 
                             if (SideEffects.typeof(e_.value.data)) |typeof| {
-                                return p.newExpr(E.String{ .data = typeof }, expr.loc);
+                                return p.newExpr(E.String2.init(typeof), expr.loc);
                             }
                         },
                         .un_delete => {
@@ -17152,7 +17070,7 @@ fn NewParser_(
                                 key.data.isStringValue() and
                                 strings.eqlComptime(
                                 // __proto__ is utf8, assume it lives in refs
-                                key.data.e_string.slice(p.allocator),
+                                key.data.e_string_2.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory(),
                                 "__proto__",
                             )) {
                                 if (has_proto) {
@@ -17359,10 +17277,10 @@ fn NewParser_(
                             const first = e_.args.first_();
                             const state = TransposeState{
                                 .is_require_immediately_assigned_to_decl = in.is_immediately_assigned_to_decl and
-                                    first.data == .e_string,
+                                    first.data == .e_string_2,
                             };
                             switch (first.data) {
-                                .e_string => {
+                                .e_string_2 => {
                                     // require(FOO) => require(FOO)
                                     return p.transposeRequire(first, &state);
                                 },
@@ -17405,7 +17323,7 @@ fn NewParser_(
                         if (e_.args.len == 1) {
                             const first = e_.args.first_();
                             switch (first.data) {
-                                .e_string => {
+                                .e_string_2 => {
                                     // require.resolve(FOO) => require.resolve(FOO)
                                     // (this will register dependencies)
                                     return p.transposeRequireResolveKnownString(first);
@@ -17495,11 +17413,11 @@ fn NewParser_(
 
                     // Implement constant folding for 'string'.charCodeAt(n)
                     if (e_.args.len == 1) if (e_.target.data.as(.e_dot)) |dot| {
-                        if (dot.target.data == .e_string and
-                            dot.target.data.e_string.isUTF8() and
+                        if (dot.target.data == .e_string_2 and
+                            dot.target.data.e_string_2.isAsciiOnly() and
                             bun.strings.eqlComptime(dot.name, "charCodeAt"))
                         {
-                            const str = dot.target.data.e_string.data;
+                            const str = dot.target.data.e_string_2.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory();
                             const arg1 = e_.args.at(0).unwrapInlined();
                             if (arg1.data == .e_number) {
                                 const float = arg1.data.e_number.value;
@@ -17734,9 +17652,7 @@ fn NewParser_(
             // var start = p.expr_list.items.len;
             // p.expr_list.ensureUnusedCapacity(2) catch unreachable;
             // p.expr_list.appendAssumeCapacity(_value);
-            // p.expr_list.appendAssumeCapacity(p.newExpr(E.String{
-            //     .utf8 = name,
-            // }, _value.loc));
+            // p.expr_list.appendAssumeCapacity(p.newExpr(E.String2.init(name), _value.loc));
 
             // var value = p.callRuntime(_value.loc, "ℹ", p.expr_list.items[start..p.expr_list.items.len]);
             // // Make sure tree shaking removes this if the function is never used
@@ -17827,7 +17743,7 @@ fn NewParser_(
                 .e_boolean,
                 .e_number,
                 .e_big_int,
-                .e_string,
+                .e_string_2,
                 .e_this,
                 .e_reg_exp,
                 .e_function,
@@ -18054,7 +17970,7 @@ fn NewParser_(
         //         .e_boolean,
         //         .e_number,
         //         .e_big_int,
-        //         .e_string,
+        //         .e_string_2,
         //         .e_reg_exp,
         //         => {
         //             return true;
@@ -18254,14 +18170,14 @@ fn NewParser_(
                     var typeof: Expr.Data = binary.left.data;
                     var compare: Expr.Data = binary.right.data;
                     // typeof 'undefined' !== x
-                    if (typeof == .e_string) {
+                    if (typeof == .e_string_2) {
                         typeof = binary.right.data;
                         compare = binary.left.data;
                     }
 
                     // this order because Expr.Data Tag is not a pointer
                     // so it should be slightly faster to compare
-                    if (compare != .e_string or
+                    if (compare != .e_string_2 or
                         typeof != .e_unary)
                         return false;
                     const unary = typeof.e_unary.*;
@@ -18271,7 +18187,7 @@ fn NewParser_(
 
                     const id = value.data.e_identifier.ref;
                     const id2 = unary.value.data.e_identifier.ref;
-                    return ((compare.e_string.eqlComptime("undefined") == is_yes_branch) ==
+                    return ((compare.e_string_2.eqlComptime("undefined") == is_yes_branch) ==
                         (binary.op == .bin_strict_ne or binary.op == .bin_loose_ne)) and
                         id.eql(id2);
                 },
@@ -18517,7 +18433,7 @@ fn NewParser_(
                                     // if it's not a trivial object literal, de-opt
                                     if (prop.kind != .normal or
                                         prop.key == null or
-                                        prop.key.?.data != .e_string or
+                                        prop.key.?.data != .e_string_2 or
                                         prop.flags.contains(Flags.Property.is_method) or
                                         prop.flags.contains(Flags.Property.is_computed) or
                                         prop.flags.contains(Flags.Property.is_spread) or
@@ -18550,7 +18466,7 @@ fn NewParser_(
                                 var clause_items = p.allocator.alloc(js_ast.ClauseItem, props.len) catch unreachable;
 
                                 for (props) |prop| {
-                                    const key = prop.key.?.data.e_string.string(p.allocator) catch unreachable;
+                                    const key = prop.key.?.data.e_string_2.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory();
                                     const visited_value = p.visitExpr(prop.value.?);
                                     const value = SideEffects.simplifyUnusedExpr(p, visited_value) orelse visited_value;
 
@@ -18642,15 +18558,15 @@ fn NewParser_(
                         } else if (p.options.bundle and strings.eqlComptime(name, "id") and identifier_opts.assign_target == .none) {
                             // inline module.id
                             p.ignoreUsage(p.module_ref);
-                            return p.newExpr(E.String.init(p.source.path.pretty), name_loc);
+                            return p.newExpr(E.String2.init(p.source.path.pretty), name_loc);
                         } else if (p.options.bundle and strings.eqlComptime(name, "filename") and identifier_opts.assign_target == .none) {
                             // inline module.filename
                             p.ignoreUsage(p.module_ref);
-                            return p.newExpr(E.String.init(p.source.path.name.filename), name_loc);
+                            return p.newExpr(E.String2.init(p.source.path.name.filename), name_loc);
                         } else if (p.options.bundle and strings.eqlComptime(name, "path") and identifier_opts.assign_target == .none) {
                             // inline module.path
                             p.ignoreUsage(p.module_ref);
-                            return p.newExpr(E.String.init(p.source.path.pretty), name_loc);
+                            return p.newExpr(E.String2.init(p.source.path.pretty), name_loc);
                         }
                     }
 
@@ -18705,12 +18621,12 @@ fn NewParser_(
                         return p.maybeRewritePropertyAccessForNamespace(name, &target, loc, name_loc);
                     }
                 },
-                // TODO: e_inlined_enum -> .e_string -> "length" should inline the length
-                .e_string => |str| {
+                // TODO: e_inlined_enum -> .e_string_2 -> "length" should inline the length
+                .e_string_2 => |str| {
                     if (p.options.features.minify_syntax) {
                         // minify "long-string".length to 11
                         if (strings.eqlComptime(name, "length")) {
-                            if (str.javascriptLength()) |len| {
+                            if (str.jsLength()) |len| {
                                 return p.newExpr(E.Number{ .value = @floatFromInt(len) }, loc);
                             }
                         }
@@ -18735,8 +18651,8 @@ fn NewParser_(
                                 if (prop.value != null and
                                     prop.flags.count() == 0 and
                                     prop.key != null and
-                                    prop.key.?.data == .e_string and
-                                    prop.key.?.data.e_string.eql([]const u8, name) and
+                                    prop.key.?.data == .e_string_2 and
+                                    prop.key.?.data.e_string_2.eqlSlice(name) and
                                     !bun.strings.eqlComptime(name, "__proto__"))
                                 {
                                     return prop.value.?;
@@ -18869,7 +18785,7 @@ fn NewParser_(
                     .enum_string => |str| {
                         p.ignoreUsageOfIdentifierInDotChain(target.*);
                         return p.wrapInlinedEnum(
-                            .{ .loc = loc, .data = .{ .e_string = str } },
+                            .{ .loc = loc, .data = .{ .e_string_2 = str } },
                             name,
                         );
                     },
@@ -20183,7 +20099,7 @@ fn NewParser_(
 
                                     next_numeric_value = num.value + 1.0;
                                 },
-                                .e_string => |str| {
+                                .e_string_2 => |str| {
                                     has_string_value = true;
 
                                     exported_members.getPtr(name).?.data = .{ .enum_string = str };
@@ -20850,7 +20766,7 @@ fn NewParser_(
                             if (prop.value) |prop_value| {
                                 switch (prop_value.data) {
                                     .e_function => |func| {
-                                        const is_constructor = (prop.key.?.data == .e_string and prop.key.?.data.e_string.eqlComptime("constructor"));
+                                        const is_constructor = (prop.key.?.data == .e_string_2 and prop.key.?.data.e_string_2.eqlComptime("constructor"));
 
                                         if (is_constructor) constructor_function = func;
 
@@ -20904,7 +20820,7 @@ fn NewParser_(
                                 {
                                     // design:type
                                     var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                    args[0] = p.newExpr(E.String{ .data = "design:type" }, logger.Loc.Empty);
+                                    args[0] = p.newExpr(E.String2.init("design:type"), logger.Loc.Empty);
                                     args[1] = p.serializeMetadata(prop.ts_metadata) catch unreachable;
                                     array.append(p.callRuntime(loc, "__legacyMetadataTS", args)) catch unreachable;
                                 }
@@ -20914,7 +20830,7 @@ fn NewParser_(
                                         if (prop.value) |prop_value| {
                                             {
                                                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                                args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
+                                                args[0] = p.newExpr(E.String2.init("design:paramtypes"), logger.Loc.Empty);
 
                                                 const method_args = prop_value.data.e_function.func.args;
 
@@ -20934,7 +20850,7 @@ fn NewParser_(
                                             }
                                             {
                                                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                                args[0] = p.newExpr(E.String{ .data = "design:returntype" }, logger.Loc.Empty);
+                                                args[0] = p.newExpr(E.String2.init("design:returntype"), logger.Loc.Empty);
 
                                                 args[1] = p.serializeMetadata(prop_value.data.e_function.func.return_ts_metadata) catch unreachable;
 
@@ -20981,7 +20897,7 @@ fn NewParser_(
                             } else {
                                 target = p.newExpr(E.Dot{
                                     .target = target,
-                                    .name = prop.key.?.data.e_string.data,
+                                    .name = prop.key.?.data.e_string_2.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory(),
                                     .name_loc = prop.key.?.loc,
                                 }, prop.key.?.loc);
                             }
@@ -21020,7 +20936,7 @@ fn NewParser_(
 
                             properties.insert(0, G.Property{
                                 .flags = Flags.Property.init(.{ .is_method = true }),
-                                .key = p.newExpr(E.String{ .data = "constructor" }, stmt.loc),
+                                .key = p.newExpr(E.String2.init("constructor"), stmt.loc),
                                 .value = p.newExpr(E.Function{ .func = G.Fn{
                                     .name = null,
                                     .open_parens_loc = logger.Loc.Empty,
@@ -21065,7 +20981,7 @@ fn NewParser_(
                             if (constructor_function != null) {
                                 // design:paramtypes
                                 var args = p.allocator.alloc(Expr, 2) catch unreachable;
-                                args[0] = p.newExpr(E.String{ .data = "design:paramtypes" }, logger.Loc.Empty);
+                                args[0] = p.newExpr(E.String2.init("design:paramtypes"), logger.Loc.Empty);
 
                                 const constructor_args = constructor_function.?.func.args;
                                 if (constructor_args.len > 0) {
@@ -21310,7 +21226,7 @@ fn NewParser_(
                         logger.Loc.Empty,
                     ),
                     .right = p.newExpr(
-                        E.String{ .data = "undefined" },
+                        E.String2.init("undefined"),
                         logger.Loc.Empty,
                     ),
                 },
@@ -21414,7 +21330,7 @@ fn NewParser_(
                         },
                     );
                 },
-                .e_string => |str| {
+                .e_string_2 => |str| {
                     return p.newExpr(str, loc);
                 },
                 else => {},
@@ -21448,13 +21364,13 @@ fn NewParser_(
                 // we do, but only if it's a UTF8 string
                 // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
                 .e_index => |index| {
-                    if (parts.len > 1 and index.index.data == .e_string and index.index.data.e_string.isUTF8()) {
+                    if (parts.len > 1 and index.index.data == .e_string_2 and index.index.data.e_string_2.isAsciiOnly()) {
                         if (index.optional_chain != null) {
                             return false;
                         }
 
                         const last = parts.len - 1;
-                        const is_tail_match = strings.eql(parts[last], index.index.data.e_string.slice(p.allocator));
+                        const is_tail_match = strings.eql(parts[last], index.index.data.e_string_2.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory());
                         return is_tail_match and p.isDotDefineMatch(index.target, parts[0..last]);
                     }
                 },
@@ -21753,14 +21669,14 @@ fn NewParser_(
                     var name_to_keep: ?string = null;
                     if (is_private) {} else if (!property.flags.contains(.is_method) and !property.flags.contains(.is_computed)) {
                         if (property.key) |key| {
-                            if (@as(Expr.Tag, key.data) == .e_string) {
-                                name_to_keep = key.data.e_string.string(p.allocator) catch unreachable;
+                            if (@as(Expr.Tag, key.data) == .e_string_2) {
+                                name_to_keep = key.data.e_string_2.toWtf8MayAlloc(p.allocator) catch bun.outOfMemory();
                             }
                         }
                     } else if (property.flags.contains(.is_method)) {
                         if (comptime is_typescript_enabled) {
-                            if (property.value.?.data == .e_function and property.key.?.data == .e_string and
-                                property.key.?.data.e_string.eqlComptime("constructor"))
+                            if (property.value.?.data == .e_function and property.key.?.data == .e_string_2 and
+                                property.key.?.data.e_string_2.eqlComptime("constructor"))
                             {
                                 constructor_function_ = property.value.?.data.e_function;
                                 constructor_function = constructor_function_;
@@ -23096,13 +23012,13 @@ fn NewParser_(
                     .target = Expr.initIdentifier(p.react_refresh.register_ref, loc),
                     .args = try ExprNodeList.fromSlice(p.allocator, &.{
                         Expr.initIdentifier(ref, loc),
-                        p.newExpr(E.String{
-                            .data = try bun.strings.concat(p.allocator, &.{
+                        p.newExpr(E.String2.init(
+                            try bun.strings.concat(p.allocator, &.{
                                 p.source.path.pretty,
                                 ":",
                                 original_name,
                             }),
-                        }, loc),
+                        ), loc),
                     }),
                 }, loc) }, loc));
 
@@ -23117,12 +23033,12 @@ fn NewParser_(
             if (p.options.features.server_components == .wrap_exports_for_server_reference)
                 bun.todoPanic(@src(), "registerServerReference", .{});
 
-            const module_path = p.newExpr(E.String{
-                .data = if (p.options.jsx.development)
+            const module_path = p.newExpr(E.String2.init(
+                if (p.options.jsx.development)
                     p.source.path.pretty
                 else
                     bun.todoPanic(@src(), "TODO: unique_key here", .{}),
-            }, logger.Loc.Empty);
+            ), logger.Loc.Empty);
 
             // registerClientReference(
             //   Comp,
@@ -23134,7 +23050,7 @@ fn NewParser_(
                 .args = js_ast.ExprNodeList.fromSlice(p.allocator, &.{
                     val,
                     module_path,
-                    p.newExpr(E.String{ .data = original_name }, logger.Loc.Empty),
+                    p.newExpr(E.String2.init(original_name), logger.Loc.Empty),
                 }) catch bun.outOfMemory(),
             }, logger.Loc.Empty);
         }
@@ -23250,7 +23166,7 @@ fn NewParser_(
             ) catch bun.outOfMemory();
 
             args[0] = function_with_hook_calls;
-            args[1] = p.newExpr(E.String{ .data = hash_data }, loc);
+            args[1] = p.newExpr(E.String2.init(hash_data), loc);
 
             if (have_force_arg) args[2] = p.newExpr(E.Boolean{ .value = p.react_refresh.force_reset }, loc);
 
@@ -23874,7 +23790,7 @@ pub const ConvertESMExportsForHmr = struct {
                                 // a binding in this scope. we can move it to the exports object.
                                 if (symbol.use_count_estimate == 0 and decl.value.?.canBeMoved()) {
                                     try ctx.export_props.append(p.allocator, .{
-                                        .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
+                                        .key = Expr.init(E.String2, E.String2.init(symbol.original_name), decl.binding.loc),
                                         .value = decl.value,
                                     });
                                 } else {
@@ -23903,7 +23819,7 @@ pub const ConvertESMExportsForHmr = struct {
                 // Simple case: we can move this to the default property of the exports object
                 if (st.canBeMoved()) {
                     try ctx.export_props.append(p.allocator, .{
-                        .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
+                        .key = Expr.init(E.String2, E.String2.init("default"), stmt.loc),
                         .value = st.value.toExpr(),
                     });
                     // no statement emitted
@@ -23917,7 +23833,7 @@ pub const ConvertESMExportsForHmr = struct {
                 try p.current_scope.generated.push(p.allocator, temp_id);
 
                 try ctx.export_props.append(p.allocator, .{
-                    .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
+                    .key = Expr.init(E.String2, E.String2.init("default"), stmt.loc),
                     .value = Expr.initIdentifier(temp_id, stmt.loc),
                 });
 
@@ -23937,9 +23853,9 @@ pub const ConvertESMExportsForHmr = struct {
 
                 // Export as CommonJS
                 try ctx.export_props.append(p.allocator, .{
-                    .key = Expr.init(E.String, .{
-                        .data = p.symbols.items[st.class.class_name.?.ref.?.inner_index].original_name,
-                    }, stmt.loc),
+                    .key = Expr.init(E.String2, E.String2.init(
+                        p.symbols.items[st.class.class_name.?.ref.?.inner_index].original_name,
+                    ), stmt.loc),
                     .value = Expr.initIdentifier(st.class.class_name.?.ref.?, stmt.loc),
                 });
 
@@ -23955,9 +23871,9 @@ pub const ConvertESMExportsForHmr = struct {
 
                 // Export as CommonJS
                 try ctx.export_props.append(p.allocator, .{
-                    .key = Expr.init(E.String, .{
-                        .data = p.symbols.items[st.func.name.?.ref.?.inner_index].original_name,
-                    }, stmt.loc),
+                    .key = Expr.init(E.String2, E.String2.init(
+                        p.symbols.items[st.func.name.?.ref.?.inner_index].original_name,
+                    ), stmt.loc),
                     .value = Expr.initIdentifier(st.func.name.?.ref.?, stmt.loc),
                 });
 
@@ -23966,9 +23882,9 @@ pub const ConvertESMExportsForHmr = struct {
             .s_export_clause => |st| {
                 for (st.items) |item| {
                     try ctx.export_props.append(p.allocator, .{
-                        .key = Expr.init(E.String, .{
-                            .data = item.alias,
-                        }, stmt.loc),
+                        .key = Expr.init(E.String2, E.String2.init(
+                            item.alias,
+                        ), stmt.loc),
                         .value = Expr.initIdentifier(item.name.ref.?, item.name.loc),
                     });
                 }
@@ -24030,9 +23946,9 @@ pub const ConvertESMExportsForHmr = struct {
         const symbol = p.symbols.items[ref.inner_index];
         const id = Expr.initIdentifier(ref, loc);
         if (is_live_binding) {
-            const key = Expr.init(E.String, .{
-                .data = symbol.original_name,
-            }, loc);
+            const key = Expr.init(E.String2, E.String2.init(
+                symbol.original_name,
+            ), loc);
 
             // This is technically incorrect in that we've marked this as a
             // top level symbol. but all we care about is preventing name
@@ -24077,9 +23993,9 @@ pub const ConvertESMExportsForHmr = struct {
         } else {
             // 'abc,'
             try ctx.export_props.append(p.allocator, .{
-                .key = Expr.init(E.String, .{
-                    .data = symbol.original_name,
-                }, loc),
+                .key = Expr.init(E.String2, E.String2.init(
+                    symbol.original_name,
+                ), loc),
                 .value = id,
             });
         }
