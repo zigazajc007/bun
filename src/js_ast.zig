@@ -2327,8 +2327,7 @@ pub const E = struct {
 
         pub fn byteLength(self: *const String) usize {
             return switch (self.value) {
-                .ascii => |a| a.len,
-                .wtf8 => |a| a.len,
+                .ascii, .wtf8 => |a| a.len,
                 .ascii_only_rope => |a| a.js_len,
             };
         }
@@ -2360,23 +2359,20 @@ pub const E = struct {
         /// For E.String s which are from the JSON parser. Asserts the string is not a rope string.
         pub fn asWtf8JSON(self: *const String) []const u8 {
             return switch (self.value) {
-                .ascii => |a| a,
-                .wtf8 => |a| a,
+                .ascii, .wtf8 => |a| a,
                 else => @panic("asWtf8JSON called ascii_only_rope E.String"),
             };
         }
         pub fn copyToSliceWtf8(self: *const String, slice: []u8) void {
             bun.assert(self.byteLength() == slice.len);
             switch (self.value) {
-                .ascii => |a| @memcpy(slice, a),
-                .wtf8 => |a| @memcpy(slice, a),
+                .ascii, .wtf8 => |a| @memcpy(slice, a),
                 .ascii_only_rope => |*a| a.copyToSliceWtf8(slice),
             }
         }
         pub fn toWtf8MayAlloc(self: *const String, arena: std.mem.Allocator) ![]const u8 {
             switch (self.value) {
-                .ascii => |a| return a,
-                .wtf8 => |a| return a,
+                .ascii, .wtf8 => |a| return a,
                 .ascii_only_rope => |*a| {
                     const result = try arena.alloc(u8, a.js_len);
                     a.copyToSliceWtf8(result);
@@ -2399,8 +2395,7 @@ pub const E = struct {
         pub fn hash(s: *const String) u64 {
             var hasher = std.hash.Wyhash.init(0);
             switch (s.value) {
-                .ascii => |a| hasher.update(a),
-                .wtf8 => |a| hasher.update(a),
+                .ascii, .wtf8 => |a| hasher.update(a),
                 .ascii_only_rope => |*a| {
                     var next: ?*const StringAsciiRopeSegment = &a.segment;
                     while (next) |current| : (next = current.next) {
@@ -2423,8 +2418,7 @@ pub const E = struct {
         }
         pub fn eqlSlice(self: *const String, other: []const u8) bool {
             return switch (self.value) {
-                .ascii => |a| strings.eqlLong(a, other, true),
-                .wtf8 => |a| strings.eqlLong(a, other, true),
+                .ascii, .wtf8 => |a| strings.eqlLong(a, other, true),
                 .ascii_only_rope => |*a| {
                     // alternatively, we can make self be *String and collapse the rope
                     if (a.js_len != other.len) return false;
@@ -2441,8 +2435,7 @@ pub const E = struct {
         }
         pub fn eqlComptime(self: *const String, comptime other: []const u8) bool {
             return switch (self.value) {
-                .ascii => |a| strings.eqlComptime(a, other),
-                .wtf8 => |a| strings.eqlComptime(a, other),
+                .ascii, .wtf8 => |a| strings.eqlComptime(a, other),
                 .ascii_only_rope => |*a| {
                     // alternatively, we can make self be *String and collapse the rope
                     if (a.js_len != other.len) return false;
@@ -5543,10 +5536,7 @@ pub const Expr = struct {
 
                 .e_string => |e| {
                     switch (e.value) {
-                        .ascii => |a| {
-                            hasher.update(a);
-                        },
-                        .wtf8 => |a| {
+                        .ascii, .wtf8 => |a| {
                             hasher.update(a);
                         },
                         .ascii_only_rope => |*a| {
