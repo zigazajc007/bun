@@ -1273,11 +1273,11 @@ fn NewPrinter(
                         }
                         temp_bindings.ensureUnusedCapacity(bun.default_allocator, 2) catch unreachable;
                         temp_bindings.appendAssumeCapacity(.{
-                            .key = Expr.init(E.String2, E.String2.init(target_e_dot.name), target_e_dot.name_loc),
+                            .key = Expr.init(E.String, E.String.init(target_e_dot.name), target_e_dot.name_loc),
                             .value = decls[0].binding,
                         });
                         temp_bindings.appendAssumeCapacity(.{
-                            .key = Expr.init(E.String2, E.String2.init(second_e_dot.name), second_e_dot.name_loc),
+                            .key = Expr.init(E.String, E.String.init(second_e_dot.name), second_e_dot.name_loc),
                             .value = decls[1].binding,
                         });
 
@@ -1300,7 +1300,7 @@ fn NewPrinter(
                             }
 
                             temp_bindings.append(bun.default_allocator, .{
-                                .key = Expr.init(E.String2, E.String2.init(e_dot.name), e_dot.name_loc),
+                                .key = Expr.init(E.String, E.String.init(e_dot.name), e_dot.name_loc),
                                 .value = decl.binding,
                             }) catch unreachable;
                             decls = decls[1..];
@@ -2451,7 +2451,7 @@ fn NewPrinter(
                     if (e.optional_chain == null) {
                         flags.insert(.has_non_optional_chain_parent);
 
-                        if (e.index.data.as(.e_string_2)) |str| {
+                        if (e.index.data.as(.e_string)) |str| {
                             const str_val = str.toWtf8MayAlloc(p.options.allocator) catch bun.outOfMemory();
                             if (p.tryToGetImportedEnumValue(e.target, str_val)) |value| {
                                 p.printInlinedEnum(value, str_val, level);
@@ -2722,7 +2722,7 @@ fn NewPrinter(
                         p.print(if (e.value) "true" else "false");
                     }
                 },
-                .e_string_2 => |e| {
+                .e_string => |e| {
                     const value = e.toWtf8MayAlloc(p.options.allocator) catch bun.outOfMemory();
                     p.addSourceMapping(expr.loc);
 
@@ -3173,7 +3173,7 @@ fn NewPrinter(
                         if (p.tryToGetImportedEnumValue(dot.target, dot.name)) |value| {
                             switch (value) {
                                 .string => |str| {
-                                    item.key.?.data = .{ .e_string_2 = str };
+                                    item.key.?.data = .{ .e_string = str };
 
                                     // Problematic key names must stay computed for correctness
                                     if (!str.eqlComptime("__proto__") and !str.eqlComptime("constructor") and !str.eqlComptime("prototype")) {
@@ -3286,7 +3286,7 @@ fn NewPrinter(
                     p.addSourceMapping(_key.loc);
                     p.printSymbol(priv.ref);
                 },
-                .e_string_2 => |key| {
+                .e_string => |key| {
                     p.addSourceMapping(_key.loc);
                     p.printSpaceBeforeIdentifier();
                     var allow_shorthand: bool = true;
@@ -3483,7 +3483,7 @@ fn NewPrinter(
                                 }
 
                                 switch (property.key.data) {
-                                    .e_string_2 => |str| {
+                                    .e_string => |str| {
                                         p.addSourceMapping(property.key.loc);
 
                                         p.printSpaceBeforeIdentifier();
@@ -4847,7 +4847,7 @@ fn NewPrinter(
 
                 // TODO: extract printString
                 .string => |str| p.printExpr(.{
-                    .data = .{ .e_string_2 = str },
+                    .data = .{ .e_string = str },
                     .loc = logger.Loc.Empty,
                 }, level, .{}),
             }

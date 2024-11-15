@@ -183,7 +183,7 @@ pub const PackageJSON = struct {
     ) !void {
         var valid_count: usize = 0;
         for (json.properties.slice()) |prop| {
-            if (prop.value.?.data != .e_string_2) continue;
+            if (prop.value.?.data != .e_string) continue;
             valid_count += 1;
         }
 
@@ -191,10 +191,10 @@ pub const PackageJSON = struct {
         env.defaults.ensureTotalCapacity(allocator, valid_count) catch {};
 
         for (json.properties.slice()) |prop| {
-            if (prop.value.?.data != .e_string_2) continue;
+            if (prop.value.?.data != .e_string) continue;
             env.defaults.appendAssumeCapacity(.{
-                .key = prop.key.?.data.e_string_2.toWtf8MayAlloc(allocator) catch bun.outOfMemory(),
-                .value = prop.value.?.data.e_string_2.toWtf8MayAlloc(allocator) catch bun.outOfMemory(),
+                .key = prop.key.?.data.e_string.toWtf8MayAlloc(allocator) catch bun.outOfMemory(),
+                .value = prop.value.?.data.e_string.toWtf8MayAlloc(allocator) catch bun.outOfMemory(),
             });
         }
     }
@@ -206,7 +206,7 @@ pub const PackageJSON = struct {
     ) void {
         var valid_count: usize = 0;
         for (json.properties.slice()) |prop| {
-            if (prop.value.?.data != .e_string_2) continue;
+            if (prop.value.?.data != .e_string) continue;
             valid_count += 1;
         }
 
@@ -215,9 +215,9 @@ pub const PackageJSON = struct {
         var values = buffer[valid_count..];
         var i: usize = 0;
         for (json.properties.slice()) |prop| {
-            if (prop.value.?.data != .e_string_2) continue;
-            keys[i] = prop.key.?.data.e_string_2.toWtf8MayAlloc(allocator) catch unreachable;
-            values[i] = prop.value.?.data.e_string_2.toWtf8MayAlloc(allocator) catch unreachable;
+            if (prop.value.?.data != .e_string) continue;
+            keys[i] = prop.key.?.data.e_string.toWtf8MayAlloc(allocator) catch unreachable;
+            values[i] = prop.value.?.data.e_string.toWtf8MayAlloc(allocator) catch unreachable;
             i += 1;
         }
         framework.override_modules = Api.StringMap{ .keys = keys, .values = values };
@@ -230,7 +230,7 @@ pub const PackageJSON = struct {
     ) anyerror!void {
         for (json.properties.slice()) |prop| {
             switch (prop.key.?.data) {
-                .e_string_2 => |e_str| {
+                .e_string => |e_str| {
                     const str = e_str.toWtf8MayAlloc(allocator) catch bun.outOfMemory();
 
                     if (strings.eqlComptime(str, "defaults")) {
@@ -244,7 +244,7 @@ pub const PackageJSON = struct {
                         }
                     } else if (strings.eqlComptime(str, ".env")) {
                         switch (prop.value.?.data) {
-                            .e_string_2 => |value_str| {
+                            .e_string => |value_str| {
                                 env.setBehaviorFromPrefix(value_str.toWtf8MayAlloc(allocator) catch bun.outOfMemory());
                             },
                             else => {
@@ -401,7 +401,7 @@ pub const PackageJSON = struct {
             if (framework_object.expr.asProperty("router")) |router| {
                 if (router.expr.asProperty("dir")) |route_dir| {
                     switch (route_dir.expr.data) {
-                        .e_string_2 => |estr| {
+                        .e_string => |estr| {
                             const str = estr.toWtf8MayAlloc(allocator) catch bun.outOfMemory();
                             if (str.len > 0) {
                                 pair.router.dir = str;
@@ -414,12 +414,12 @@ pub const PackageJSON = struct {
                             var count: usize = 0;
                             const items = array.items.slice();
                             for (items) |item| {
-                                count += @intFromBool(item.data == .e_string_2 and !item.data.e_string_2.isEmpty());
+                                count += @intFromBool(item.data == .e_string and !item.data.e_string.isEmpty());
                             }
                             switch (count) {
                                 0 => {},
                                 1 => {
-                                    const str = items[0].data.e_string_2.toWtf8MayAlloc(allocator) catch bun.outOfMemory();
+                                    const str = items[0].data.e_string.toWtf8MayAlloc(allocator) catch bun.outOfMemory();
                                     if (str.len > 0) {
                                         pair.router.dir = str;
                                         pair.router.possible_dirs = &[_]string{};
@@ -432,8 +432,8 @@ pub const PackageJSON = struct {
 
                                     var list_i: usize = 0;
                                     for (items) |item| {
-                                        if (item.data == .e_string_2 and !item.data.e_string_2.isEmpty()) {
-                                            list[list_i] = item.data.e_string_2.toWtf8MayAlloc(allocator) catch bun.outOfMemory();
+                                        if (item.data == .e_string and !item.data.e_string.isEmpty()) {
+                                            list[list_i] = item.data.e_string.toWtf8MayAlloc(allocator) catch bun.outOfMemory();
                                             list_i += 1;
                                         }
                                     }
@@ -455,8 +455,8 @@ pub const PackageJSON = struct {
                         var valid_count: usize = 0;
 
                         while (array.next()) |expr| {
-                            if (expr.data != .e_string_2) continue;
-                            const e_str: *const js_ast.E.String2 = expr.data.e_string_2;
+                            if (expr.data != .e_string) continue;
+                            const e_str: *const js_ast.E.String  = expr.data.e_string;
                             if (e_str.data.len == 0 or e_str.data[0] != '.') continue;
                             valid_count += 1;
                         }
@@ -468,8 +468,8 @@ pub const PackageJSON = struct {
 
                             // We don't need to allocate the strings because we keep the package.json source string in memory
                             while (array.next()) |expr| {
-                                if (expr.data != .e_string_2) continue;
-                                const e_str: *const js_ast.E.String2 = expr.data.e_string_2;
+                                if (expr.data != .e_string) continue;
+                                const e_str: *const js_ast.E.String  = expr.data.e_string;
                                 if (e_str.data.len == 0 or e_str.data[0] != '.') continue;
                                 extensions[i] = e_str.data;
                                 i += 1;
@@ -571,7 +571,7 @@ pub const PackageJSON = struct {
             for (remap_properties) |remap| {
                 const import_name = remap.key.?.asString(allocator) orelse continue;
                 const remap_value = remap.value.?;
-                if (remap_value.data != .e_string_2 or remap_value.data.e_string_2.isEmpty()) {
+                if (remap_value.data != .e_string or remap_value.data.e_string.isEmpty()) {
                     log.addWarningFmt(
                         json_source,
                         remap_value.loc,
@@ -582,7 +582,7 @@ pub const PackageJSON = struct {
                     continue;
                 }
 
-                const remap_value_str = remap_value.data.e_string_2.asWtf8JSON();
+                const remap_value_str = remap_value.data.e_string.asWtf8JSON();
 
                 map.putAssumeCapacityNoClobber(import_name, remap_value_str);
             }
@@ -761,7 +761,7 @@ pub const PackageJSON = struct {
                                 const key = allocator.dupe(u8, r.fs.normalize(_key_str)) catch unreachable;
 
                                 switch (value.data) {
-                                    .e_string_2 => |str| {
+                                    .e_string => |str| {
                                         // If this is a string, it's a replacement package
                                         package_json.browser_map.put(key, str.toWtf8MayAlloc(allocator) catch bun.outOfMemory()) catch bun.outOfMemory();
                                     },
@@ -1088,7 +1088,7 @@ pub const ExportsMap = struct {
                 .e_null => {
                     return Entry{ .first_token = js_lexer.rangeOfIdentifier(this.source, expr.loc), .data = .{ .null = {} } };
                 },
-                .e_string_2 => |str| {
+                .e_string => |str| {
                     return Entry{
                         .data = .{
                             .string = str.toWtf8MayAlloc(this.allocator) catch bun.outOfMemory(),
@@ -1122,7 +1122,7 @@ pub const ExportsMap = struct {
                     first_token.loc = expr.loc;
                     first_token.len = 1;
                     for (e_obj.properties.slice(), 0..) |prop, i| {
-                        const key: string = prop.key.?.data.e_string_2.toWtf8MayAlloc(this.allocator) catch bun.outOfMemory();
+                        const key: string = prop.key.?.data.e_string.toWtf8MayAlloc(this.allocator) catch bun.outOfMemory();
                         const key_range: logger.Range = this.source.rangeOfString(prop.key.?.loc);
 
                         // If exports is an Object with both a key starting with "." and a key

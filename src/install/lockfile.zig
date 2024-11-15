@@ -804,7 +804,7 @@ fn preprocessUpdateRequests(old: *Lockfile, updates: []PackageManager.UpdateRequ
                     }
                 }
 
-                update.e_string_2 = null;
+                update.e_string = null;
             }
         }
     }
@@ -2442,7 +2442,7 @@ pub const OverrideMap = struct {
             for (overrides.expr.data.e_object.properties.slice()) |entry| {
                 builder.count(entry.key.?.asString(lockfile.allocator).?);
                 switch (entry.value.?.data) {
-                    .e_string_2 => |s| {
+                    .e_string => |s| {
                         builder.count(s.toWtf8MayAlloc(lockfile.allocator) catch bun.outOfMemory());
                     },
                     .e_object => {
@@ -2518,11 +2518,11 @@ pub const OverrideMap = struct {
             const value = value: {
                 // for one level deep, we will only support a string and  { ".": value }
                 const value_expr = prop.value.?;
-                if (value_expr.data == .e_string_2) {
+                if (value_expr.data == .e_string) {
                     break :value value_expr;
                 } else if (value_expr.data == .e_object) {
                     if (value_expr.asProperty(".")) |dot| {
-                        if (dot.expr.data == .e_string_2) {
+                        if (dot.expr.data == .e_string) {
                             if (value_expr.data.e_object.properties.len > 1) {
                                 try log.addWarningFmt(&source, value_expr.loc, lockfile.allocator, "Bun currently does not support nested \"overrides\"", .{});
                             }
@@ -2540,7 +2540,7 @@ pub const OverrideMap = struct {
                 continue;
             };
 
-            const version_str = value.data.e_string_2.toWtf8MayAlloc(lockfile.allocator) catch bun.outOfMemory();
+            const version_str = value.data.e_string.toWtf8MayAlloc(lockfile.allocator) catch bun.outOfMemory();
             if (strings.hasPrefixComptime(version_str, "patch:")) {
                 // TODO(dylan-conway): apply .patch files to packages
                 try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
@@ -2589,7 +2589,7 @@ pub const OverrideMap = struct {
                 continue;
             }
             const value = prop.value.?;
-            if (value.data != .e_string_2) {
+            if (value.data != .e_string) {
                 try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Expected string value for resolution \"{s}\"", .{k});
                 continue;
             }
@@ -2610,7 +2610,7 @@ pub const OverrideMap = struct {
                 continue;
             }
 
-            const version_str = value.data.e_string_2.asWtf8JSON();
+            const version_str = value.data.e_string.asWtf8JSON();
             if (strings.hasPrefixComptime(version_str, "patch:")) {
                 // TODO(dylan-conway): apply .patch files to packages
                 try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"resolutions\"", .{});
@@ -4690,7 +4690,7 @@ pub const Package = extern struct {
                         }
                         break :bin;
                     },
-                    .e_string_2 => {
+                    .e_string => {
                         if (bin.expr.asString(allocator)) |str_| {
                             string_builder.count(str_);
                             break :bin;
@@ -5032,7 +5032,7 @@ pub const Package = extern struct {
 
                         break :bin;
                     },
-                    .e_string_2 => |stri| {
+                    .e_string => |stri| {
                         if (!stri.isEmpty()) {
                             package.bin = .{
                                 .tag = .file,

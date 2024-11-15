@@ -168,9 +168,9 @@ pub fn migrateNPMLockfile(
         if (obj.data.e_object.properties.len == 0) return error.InvalidNPMLockfile;
         const prop1 = obj.data.e_object.properties.at(0);
         if (prop1.key) |k| {
-            if (k.data != .e_string_2) return error.InvalidNPMLockfile;
+            if (k.data != .e_string) return error.InvalidNPMLockfile;
             // first key must be the "", self reference
-            if (!k.data.e_string_2.isEmpty()) return error.InvalidNPMLockfile;
+            if (!k.data.e_string.isEmpty()) return error.InvalidNPMLockfile;
             if (prop1.value.?.data != .e_object) return error.InvalidNPMLockfile;
             root_package = prop1.value.?.data.e_object;
         } else return error.InvalidNPMLockfile;
@@ -439,7 +439,7 @@ pub fn migrateNPMLockfile(
                 if (link.data != .e_boolean) continue;
                 if (link.data.e_boolean.value) {
                     if (pkg.get("resolved")) |resolved| {
-                        if (resolved.data != .e_string_2) continue;
+                        if (resolved.data != .e_string) continue;
                         const resolved_str = resolved.asString(allocator).?;
                         if (wksp.map.get(resolved_str)) |wksp_entry| {
                             const pkg_name = packageNameFromPath(pkg_path);
@@ -522,8 +522,8 @@ pub fn migrateNPMLockfile(
                     }
 
                     for (cpu_array.data.e_array.items.slice()) |item| {
-                        if (item.data != .e_string_2) return error.InvalidNPMLockfile;
-                        arch.apply(item.data.e_string_2.asWtf8JSON());
+                        if (item.data != .e_string) return error.InvalidNPMLockfile;
+                        arch.apply(item.data.e_string.asWtf8JSON());
                     }
                     break :arch arch.combine();
                 } else .all,
@@ -536,8 +536,8 @@ pub fn migrateNPMLockfile(
                     }
 
                     for (cpu_array.data.e_array.items.slice()) |item| {
-                        if (item.data != .e_string_2) return error.InvalidNPMLockfile;
-                        os.apply(item.data.e_string_2.asWtf8JSON());
+                        if (item.data != .e_string) return error.InvalidNPMLockfile;
+                        os.apply(item.data.e_string.asWtf8JSON());
                     }
                     break :arch os.combine();
                 } else .all,

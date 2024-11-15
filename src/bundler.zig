@@ -614,7 +614,7 @@ pub const Bundler = struct {
         try this.options.loadDefines(this.allocator, this.env, &this.options.env);
 
         if (this.options.define.dots.get("NODE_ENV")) |NODE_ENV| {
-            if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string_2 and NODE_ENV[0].data.value.e_string_2.eqlComptime("production")) {
+            if (NODE_ENV.len > 0 and NODE_ENV[0].data.value == .e_string and NODE_ENV[0].data.value.e_string.eqlComptime("production")) {
                 this.options.production = true;
             }
         }
@@ -1493,7 +1493,7 @@ pub const Bundler = struct {
                             defer duplicate_key_checker.deinit();
                             var count: usize = 0;
                             for (properties, decls, symbols, 0..) |*prop, *decl, *symbol, i| {
-                                const name = prop.key.?.data.e_string_2.toWtf8MayAlloc(allocator) catch bun.outOfMemory();
+                                const name = prop.key.?.data.e_string.toWtf8MayAlloc(allocator) catch bun.outOfMemory();
                                 // Do not make named exports for "default" exports
                                 if (strings.eqlComptime(name, "default"))
                                     continue;
@@ -1594,7 +1594,7 @@ pub const Bundler = struct {
             },
             // TODO: use lazy export AST
             .text => {
-                const expr = js_ast.Expr.init(js_ast.E.String2, js_ast.E.String2.init(source.contents), logger.Loc.Empty);
+                const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String.init(source.contents), logger.Loc.Empty);
                 const stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
                     .default_name = js_ast.LocRef{

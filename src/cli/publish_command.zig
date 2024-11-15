@@ -897,37 +897,37 @@ pub const PublishCommand = struct {
         var dist_props = try allocator.alloc(G.Property, 3);
         dist_props[0] = .{
             .key = Expr.init(
-                E.String2,
-                E.String2.init("integrity"),
+                E.String,
+                E.String.init("integrity"),
                 logger.Loc.Empty,
             ),
             .value = Expr.init(
-                E.String2,
-                E.String2.init(try std.fmt.allocPrint(allocator, "{}", .{bun.fmt.integrity(integrity, .full)})),
+                E.String,
+                E.String.init(try std.fmt.allocPrint(allocator, "{}", .{bun.fmt.integrity(integrity, .full)})),
                 logger.Loc.Empty,
             ),
         };
         dist_props[1] = .{
             .key = Expr.init(
-                E.String2,
-                E.String2.init("shasum"),
+                E.String,
+                E.String.init("shasum"),
                 logger.Loc.Empty,
             ),
             .value = Expr.init(
-                E.String2,
-                E.String2.init(try std.fmt.allocPrint(allocator, "{s}", .{bun.fmt.bytesToHex(shasum, .lower)})),
+                E.String,
+                E.String.init(try std.fmt.allocPrint(allocator, "{s}", .{bun.fmt.bytesToHex(shasum, .lower)})),
                 logger.Loc.Empty,
             ),
         };
         dist_props[2] = .{
             .key = Expr.init(
-                E.String2,
-                E.String2.init("tarball"),
+                E.String,
+                E.String.init("tarball"),
                 logger.Loc.Empty,
             ),
             .value = Expr.init(
-                E.String2,
-                E.String2.init(
+                E.String,
+                E.String.init(
                     try bun.fmt.allocPrint(allocator, "http://{s}/{s}/-/{s}", .{
                         strings.withoutTrailingSlash(registry.url.href),
                         package_name,
@@ -997,7 +997,7 @@ pub const PublishCommand = struct {
         var path_buf: bun.PathBuffer = undefined;
         if (json.asProperty("bin")) |bin_query| {
             switch (bin_query.expr.data) {
-                .e_string_2 => |bin_str| {
+                .e_string => |bin_str| {
                     var bin_props = std.ArrayList(G.Property).init(allocator);
                     const normalized = strings.withoutPrefixComptimeZ(
                         path.normalizeBufZ(
@@ -1013,13 +1013,13 @@ pub const PublishCommand = struct {
 
                     try bin_props.append(.{
                         .key = Expr.init(
-                            E.String2,
-                            E.String2.init(package_name),
+                            E.String,
+                            E.String.init(package_name),
                             logger.Loc.Empty,
                         ),
                         .value = Expr.init(
-                            E.String2,
-                            E.String2.init(try allocator.dupe(u8, normalized)),
+                            E.String,
+                            E.String.init(try allocator.dupe(u8, normalized)),
                             logger.Loc.Empty,
                         ),
                     });
@@ -1037,12 +1037,12 @@ pub const PublishCommand = struct {
                     for (bin_obj.properties.slice()) |bin_prop| {
                         const key = key: {
                             if (bin_prop.key) |key| {
-                                if (key.isString() and !key.data.e_string_2.isEmpty()) {
+                                if (key.isString() and !key.data.e_string.isEmpty()) {
                                     break :key try allocator.dupeZ(
                                         u8,
                                         strings.withoutPrefixComptime(
                                             path.normalizeBuf(
-                                                try key.data.e_string_2.toWtf8MayAlloc(allocator),
+                                                try key.data.e_string.toWtf8MayAlloc(allocator),
                                                 &path_buf,
                                                 .posix,
                                             ),
@@ -1061,13 +1061,13 @@ pub const PublishCommand = struct {
 
                         const value = value: {
                             if (bin_prop.value) |value| {
-                                if (value.isString() and !value.data.e_string_2.isEmpty()) {
+                                if (value.isString() and !value.data.e_string.isEmpty()) {
                                     break :value try allocator.dupeZ(
                                         u8,
                                         strings.withoutPrefixComptimeZ(
                                             // replace separators
                                             path.normalizeBufZ(
-                                                try value.data.e_string_2.toWtf8MayAlloc(allocator),
+                                                try value.data.e_string.toWtf8MayAlloc(allocator),
                                                 &path_buf,
                                                 .posix,
                                             ),
@@ -1089,13 +1089,13 @@ pub const PublishCommand = struct {
 
                         try bin_props.append(.{
                             .key = Expr.init(
-                                E.String2,
-                                E.String2.init(key),
+                                E.String,
+                                E.String.init(key),
                                 logger.Loc.Empty,
                             ),
                             .value = Expr.init(
-                                E.String2,
-                                E.String2.init(value),
+                                E.String,
+                                E.String.init(value),
                                 logger.Loc.Empty,
                             ),
                         });
@@ -1172,13 +1172,13 @@ pub const PublishCommand = struct {
 
                         try bin_props.append(.{
                             .key = Expr.init(
-                                E.String2,
-                                E.String2.init(std.fs.path.basenamePosix(subpath)),
+                                E.String,
+                                E.String.init(std.fs.path.basenamePosix(subpath)),
                                 logger.Loc.Empty,
                             ),
                             .value = Expr.init(
-                                E.String2,
-                                E.String2.init(subpath),
+                                E.String,
+                                E.String.init(subpath),
                                 logger.Loc.Empty,
                             ),
                         });

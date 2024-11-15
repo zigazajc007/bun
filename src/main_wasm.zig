@@ -220,7 +220,7 @@ const TestAnalyzer = struct {
                     if (call.args.len > 0) {
                         const label_expr: JSAst.Expr = call.args.slice()[0];
                         switch (label_expr.data) {
-                            .e_string_2 => |str| {
+                            .e_string => |str| {
                                 const str_data = str.toWtf8MayAlloc(this.string_buffer.allocator) catch bun.outOfMemory();
                                 const ptr = Api.StringPointer{
                                     .offset = this.string_buffer.items.len,
@@ -245,7 +245,7 @@ const TestAnalyzer = struct {
                         if (call.args.len > 0) {
                             const label_expr: JSAst.Expr = call.args.slice()[0];
                             switch (label_expr.data) {
-                                .e_string_2 => |str| {
+                                .e_string => |str| {
                                     const str_data = str.toWtf8MayAlloc(this.string_buffer.allocator) catch bun.outOfMemory();
                                     try str.toUTF8(this.string_buffer.allocator);
                                     const ptr = Api.StringPointer{

@@ -79,7 +79,7 @@ const UnsupportedPackages = struct {
     pub fn update(this: *UnsupportedPackages, expr: js_ast.Expr) void {
         for (expr.data.e_object.properties.slice()) |prop| {
             inline for (comptime std.meta.fieldNames(UnsupportedPackages)) |field_name| {
-                if (strings.eqlComptime(prop.key.?.data.e_string_2.asWtf8JSON(), comptime field_name)) {
+                if (strings.eqlComptime(prop.key.?.data.e_string.asWtf8JSON(), comptime field_name)) {
                     @field(this, field_name) = true;
                 }
             }
@@ -721,9 +721,9 @@ pub const CreateCommand = struct {
                 }
 
                 if (package_json_expr.asProperty("name")) |name_expr| {
-                    if (name_expr.expr.data == .e_string_2) {
+                    if (name_expr.expr.data == .e_string) {
                         const basename = std.fs.path.basename(destination);
-                        name_expr.expr.data.e_string_2.* = bun.JSAst.E.String2.init(basename);
+                        name_expr.expr.data.e_string.* = bun.JSAst.E.String.init(basename);
                     }
                 }
 
@@ -762,7 +762,7 @@ pub const CreateCommand = struct {
                 //         var i: usize = 0;
                 //         var out_i: usize = 0;
                 //         while (i < list.len) : (i += 1) {
-                //             const key = list[i].key.?.data.e_string_2.asWtf8JSON();
+                //             const key = list[i].key.?.data.e_string.asWtf8JSON();
 
                 //             const do_prune = packages.has(key);
                 //             prune_count += @as(u16, @intCast(@intFromBool(do_prune)));
@@ -821,7 +821,7 @@ pub const CreateCommand = struct {
                             // is_nextjs = true;
                             // needs.bun_bun_for_nextjs = true;
 
-                            // next_q.expr.data.e_string_2.* = E.String2.init(target_nextjs_version);
+                            // next_q.expr.data.e_string.* = E.String.init(target_nextjs_version);
                             // }
 
                             // has_bun_framework_next = has_bun_framework_next or property.hasAnyPropertyNamed(&.{"bun-framework-next"});
@@ -912,31 +912,31 @@ pub const CreateCommand = struct {
                     const macros_string = "macros";
                     const bun_macros_relay_path = "bun-macro-relay";
 
-                    pub var dependencies_e_string = E.String2.init(dependencies_string);
-                    pub var devDependencies_e_string = E.String2.init(dev_dependencies_string);
-                    pub var bun_e_string = E.String2.init(bun_string);
-                    pub var macros_e_string = E.String2.init(macros_string);
-                    pub var react_relay_string = E.String2.init("react-relay");
-                    pub var bun_macros_relay_path_string = E.String2.init("bun-macro-relay");
-                    pub var babel_plugin_relay_macro = E.String2.init("babel-plugin-relay/macro");
-                    pub var babel_plugin_relay_macro_js = E.String2.init("babel-plugin-relay/macro.js");
-                    pub var graphql_string = E.String2.init("graphql");
+                    pub var dependencies_e_string = E.String.init(dependencies_string);
+                    pub var devDependencies_e_string = E.String.init(dev_dependencies_string);
+                    pub var bun_e_string = E.String.init(bun_string);
+                    pub var macros_e_string = E.String.init(macros_string);
+                    pub var react_relay_string = E.String.init("react-relay");
+                    pub var bun_macros_relay_path_string = E.String.init("bun-macro-relay");
+                    pub var babel_plugin_relay_macro = E.String.init("babel-plugin-relay/macro");
+                    pub var babel_plugin_relay_macro_js = E.String.init("babel-plugin-relay/macro.js");
+                    pub var graphql_string = E.String.init("graphql");
 
-                    var npx_react_scripts_build_str = E.String2.init("npx react-scripts build");
+                    var npx_react_scripts_build_str = E.String.init("npx react-scripts build");
 
-                    pub const npx_react_scripts_build = js_ast.Expr{ .data = .{ .e_string_2 = &npx_react_scripts_build_str }, .loc = logger.Loc.Empty };
+                    pub const npx_react_scripts_build = js_ast.Expr{ .data = .{ .e_string = &npx_react_scripts_build_str }, .loc = logger.Loc.Empty };
 
                     var bun_macro_relay_properties = [_]js_ast.G.Property{
                         js_ast.G.Property{
                             .key = js_ast.Expr{
                                 .data = .{
-                                    .e_string_2 = &graphql_string,
+                                    .e_string = &graphql_string,
                                 },
                                 .loc = logger.Loc.Empty,
                             },
                             .value = js_ast.Expr{
                                 .data = .{
-                                    .e_string_2 = &bun_macros_relay_path_string,
+                                    .e_string = &bun_macros_relay_path_string,
                                 },
                                 .loc = logger.Loc.Empty,
                             },
@@ -951,7 +951,7 @@ pub const CreateCommand = struct {
                         js_ast.G.Property{
                             .key = js_ast.Expr{
                                 .data = .{
-                                    .e_string_2 = &react_relay_string,
+                                    .e_string = &react_relay_string,
                                 },
                                 .loc = logger.Loc.Empty,
                             },
@@ -965,7 +965,7 @@ pub const CreateCommand = struct {
                         js_ast.G.Property{
                             .key = js_ast.Expr{
                                 .data = .{
-                                    .e_string_2 = &babel_plugin_relay_macro,
+                                    .e_string = &babel_plugin_relay_macro,
                                 },
                                 .loc = logger.Loc.Empty,
                             },
@@ -979,7 +979,7 @@ pub const CreateCommand = struct {
                         js_ast.G.Property{
                             .key = js_ast.Expr{
                                 .data = .{
-                                    .e_string_2 = &babel_plugin_relay_macro_js,
+                                    .e_string = &babel_plugin_relay_macro_js,
                                 },
                                 .loc = logger.Loc.Empty,
                             },
@@ -996,12 +996,12 @@ pub const CreateCommand = struct {
                         .properties = undefined,
                     };
 
-                    var bun_macros_relay_only_object_string = js_ast.E.String2.init("macros");
+                    var bun_macros_relay_only_object_string = js_ast.E.String.init("macros");
                     pub var bun_macros_relay_only_object_properties = [_]js_ast.G.Property{
                         js_ast.G.Property{
                             .key = js_ast.Expr{
                                 .data = .{
-                                    .e_string_2 = &bun_macros_relay_only_object_string,
+                                    .e_string = &bun_macros_relay_only_object_string,
                                 },
                                 .loc = logger.Loc.Empty,
                             },
@@ -1015,11 +1015,11 @@ pub const CreateCommand = struct {
                     };
                     pub var bun_macros_relay_only_object = E.Object{ .properties = undefined };
 
-                    var bun_only_macros_string = js_ast.E.String2.init("bun");
+                    var bun_only_macros_string = js_ast.E.String.init("bun");
                     pub var bun_only_macros_relay_property = js_ast.G.Property{
                         .key = js_ast.Expr{
                             .data = .{
-                                .e_string_2 = &bun_only_macros_string,
+                                .e_string = &bun_only_macros_string,
                             },
                             .loc = logger.Loc.Empty,
                         },
@@ -1031,53 +1031,53 @@ pub const CreateCommand = struct {
                         },
                     };
 
-                    pub var bun_framework_next_string = js_ast.E.String2.init("bun-framework-next");
-                    pub var bun_framework_next_version = js_ast.E.String2.init("latest");
+                    pub var bun_framework_next_string = js_ast.E.String.init("bun-framework-next");
+                    pub var bun_framework_next_version = js_ast.E.String.init("latest");
                     pub var bun_framework_next_property = js_ast.G.Property{
                         .key = js_ast.Expr{
                             .data = .{
-                                .e_string_2 = &bun_framework_next_string,
+                                .e_string = &bun_framework_next_string,
                             },
                             .loc = logger.Loc.Empty,
                         },
                         .value = js_ast.Expr{
                             .data = .{
-                                .e_string_2 = &bun_framework_next_version,
+                                .e_string = &bun_framework_next_version,
                             },
                             .loc = logger.Loc.Empty,
                         },
                     };
 
-                    pub var bun_macro_relay_dependency_string = js_ast.E.String2.init("bun-macro-relay");
-                    pub var bun_macro_relay_dependency_version = js_ast.E.String2.init("latest");
+                    pub var bun_macro_relay_dependency_string = js_ast.E.String.init("bun-macro-relay");
+                    pub var bun_macro_relay_dependency_version = js_ast.E.String.init("latest");
 
                     pub var bun_macro_relay_dependency = js_ast.G.Property{
                         .key = js_ast.Expr{
                             .data = .{
-                                .e_string_2 = &bun_macro_relay_dependency_string,
+                                .e_string = &bun_macro_relay_dependency_string,
                             },
                             .loc = logger.Loc.Empty,
                         },
                         .value = js_ast.Expr{
                             .data = .{
-                                .e_string_2 = &bun_macro_relay_dependency_version,
+                                .e_string = &bun_macro_relay_dependency_version,
                             },
                             .loc = logger.Loc.Empty,
                         },
                     };
 
-                    pub var refresh_runtime_string = js_ast.E.String2.init("react-refresh");
-                    pub var refresh_runtime_version = js_ast.E.String2.init("0.10.0");
+                    pub var refresh_runtime_string = js_ast.E.String.init("react-refresh");
+                    pub var refresh_runtime_version = js_ast.E.String.init("0.10.0");
                     pub var react_refresh_dependency = js_ast.G.Property{
                         .key = js_ast.Expr{
                             .data = .{
-                                .e_string_2 = &refresh_runtime_string,
+                                .e_string = &refresh_runtime_string,
                             },
                             .loc = logger.Loc.Empty,
                         },
                         .value = js_ast.Expr{
                             .data = .{
-                                .e_string_2 = &refresh_runtime_version,
+                                .e_string = &refresh_runtime_version,
                             },
                             .loc = logger.Loc.Empty,
                         },
@@ -1085,12 +1085,12 @@ pub const CreateCommand = struct {
 
                     pub var dev_dependencies_key = js_ast.Expr{
                         .data = .{
-                            .e_string_2 = &devDependencies_e_string,
+                            .e_string = &devDependencies_e_string,
                         },
                         .loc = logger.Loc.Empty,
                     };
                     pub var dependencies_key = js_ast.Expr{
-                        .data = .{ .e_string_2 = &dependencies_e_string },
+                        .data = .{ .e_string = &dependencies_e_string },
                         .loc = logger.Loc.Empty,
                     };
 
@@ -1327,7 +1327,7 @@ pub const CreateCommand = struct {
                                 var script_property_out_i: usize = 0;
 
                                 while (script_property_i < scripts_properties.len) : (script_property_i += 1) {
-                                    const script = scripts_properties[script_property_i].value.?.data.e_string_2.asWtf8JSON();
+                                    const script = scripts_properties[script_property_i].value.?.data.e_string.asWtf8JSON();
 
                                     if (strings.contains(script, "react-scripts start") or
                                         strings.contains(script, "next dev") or
@@ -1361,7 +1361,7 @@ pub const CreateCommand = struct {
                         var value = property.value.?;
                         if (value.asProperty("postinstall")) |postinstall| {
                             switch (postinstall.expr.data) {
-                                .e_string_2 => |single_task| {
+                                .e_string => |single_task| {
                                     try postinstall_tasks.append(
                                         ctx.allocator,
                                         try single_task.toWtf8MayAlloc(ctx.allocator),
@@ -1399,7 +1399,7 @@ pub const CreateCommand = struct {
 
                         if (value.asProperty("preinstall")) |preinstall| {
                             switch (preinstall.expr.data) {
-                                .e_string_2 => |single_task| {
+                                .e_string => |single_task| {
                                     try preinstall_tasks.append(
                                         ctx.allocator,
                                         try single_task.toWtf8MayAlloc(ctx.allocator),
@@ -2223,14 +2223,14 @@ pub const Example = struct {
 
                 var list = try ctx.allocator.alloc(Example, count);
                 for (q.expr.data.e_object.properties.slice(), 0..) |property, i| {
-                    const name = property.key.?.data.e_string_2.asWtf8JSON();
+                    const name = property.key.?.data.e_string.asWtf8JSON();
                     list[i] = Example{
                         .name = if (std.mem.indexOfScalar(u8, name, '/')) |slash|
                             name[slash + 1 ..]
                         else
                             name,
-                        .version = property.value.?.asProperty("version").?.expr.data.e_string_2.asWtf8JSON(),
-                        .description = property.value.?.asProperty("description").?.expr.data.e_string_2.asWtf8JSON(),
+                        .version = property.value.?.asProperty("version").?.expr.data.e_string.asWtf8JSON(),
+                        .description = property.value.?.asProperty("description").?.expr.data.e_string.asWtf8JSON(),
                     };
                 }
                 return list;

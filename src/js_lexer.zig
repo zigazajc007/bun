@@ -2113,11 +2113,11 @@ fn NewLexer_(
             return lex;
         }
 
-        pub fn toEString(lexer: *LexerType) !js_ast.E.String2 {
+        pub fn toEString(lexer: *LexerType) !js_ast.E.String  {
             switch (lexer.string_literal_raw_format) {
                 .ascii, .utf8 => {
                     // string_literal_raw_content contains ascii without escapes
-                    return js_ast.E.String2.init(lexer.string_literal_raw_content);
+                    return js_ast.E.String.init(lexer.string_literal_raw_content);
                 },
                 .needs_decode => {
                     // string_literal_raw_content contains escapes (ie '\n') that need to be converted to their values (ie 0x0A).
@@ -2127,12 +2127,12 @@ fn NewLexer_(
                     defer lexer.temp_buffer_u8.clearRetainingCapacity();
                     try lexer.temp_buffer_u8.ensureUnusedCapacity(lexer.string_literal_raw_content.len);
                     try lexer.decodeEscapeSequences(lexer.string_literal_start, lexer.string_literal_raw_content, &lexer.temp_buffer_u8);
-                    return js_ast.E.String2.init(try lexer.allocator.dupe(u8, lexer.temp_buffer_u8.items));
+                    return js_ast.E.String.init(try lexer.allocator.dupe(u8, lexer.temp_buffer_u8.items));
                 },
             }
         }
 
-        pub fn toUTF8EString(lexer: *LexerType) !js_ast.E.String2 {
+        pub fn toUTF8EString(lexer: *LexerType) !js_ast.E.String  {
             return lexer.toEString();
         }
 

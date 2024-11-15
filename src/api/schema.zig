@@ -2816,7 +2816,7 @@ pub const Api = struct {
 
             fn expectString(this: *Parser, expr: js_ast.Expr) !void {
                 switch (expr.data) {
-                    .e_string_2 => {},
+                    .e_string => {},
                     else => {
                         this.log.addErrorFmt(this.source, expr.loc, this.allocator, "expected string but received {}", .{
                             @as(js_ast.Expr.Tag, expr.data),
@@ -2826,7 +2826,7 @@ pub const Api = struct {
                 }
             }
 
-            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String2) OOM!Api.NpmRegistry {
+            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) OOM!Api.NpmRegistry {
                 return try this.parseRegistryURLStringImpl(str.data);
             }
 
@@ -2881,7 +2881,7 @@ pub const Api = struct {
 
             pub fn parseRegistry(this: *Parser, expr: js_ast.Expr) !Api.NpmRegistry {
                 switch (expr.data) {
-                    .e_string_2 => |str| {
+                    .e_string => |str| {
                         return this.parseRegistryURLString(str);
                     },
                     .e_object => |obj| {

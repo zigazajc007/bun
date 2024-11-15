@@ -353,7 +353,7 @@ pub const Loader = struct {
                 key_buf = try allocator.alloc(u8, key_buf_len + key_count * "process.env.".len);
                 const js_ast = bun.JSAst;
 
-                var e_strings = try allocator.alloc(js_ast.E.String2, e_strings_to_allocate * 2);
+                var e_strings = try allocator.alloc(js_ast.E.String, e_strings_to_allocate * 2);
                 errdefer allocator.free(e_strings);
                 errdefer allocator.free(key_buf);
                 var key_fixed_allocator = std.heap.FixedBufferAllocator.init(key_buf);
@@ -366,8 +366,8 @@ pub const Loader = struct {
                         if (strings.startsWith(entry.key_ptr.*, prefix)) {
                             const key_str = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
 
-                            e_strings[0] = js_ast.E.String2.init(value);
-                            const expr_data = js_ast.Expr.Data{ .e_string_2 = &e_strings[0] };
+                            e_strings[0] = js_ast.E.String.init(value);
+                            const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
                             _ = try to_string.getOrPutValue(
                                 key_str,
@@ -384,9 +384,9 @@ pub const Loader = struct {
                             bun.assert(hash != invalid_hash);
 
                             if (std.mem.indexOfScalar(u64, string_map_hashes, hash)) |key_i| {
-                                e_strings[0] = js_ast.E.String2.init(value);
+                                e_strings[0] = js_ast.E.String.init(value);
 
-                                const expr_data = js_ast.Expr.Data{ .e_string_2 = &e_strings[0] };
+                                const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
                                 _ = try to_string.getOrPutValue(
                                     framework_defaults.keys[key_i],
@@ -405,9 +405,9 @@ pub const Loader = struct {
                         const value: string = entry.value_ptr.value;
                         const key = std.fmt.allocPrint(key_allocator, "process.env.{s}", .{entry.key_ptr.*}) catch unreachable;
 
-                        e_strings[0] = js_ast.E.String2.init(value);
+                        e_strings[0] = js_ast.E.String.init(value);
 
-                        const expr_data = js_ast.Expr.Data{ .e_string_2 = &e_strings[0] };
+                        const expr_data = js_ast.Expr.Data{ .e_string = &e_strings[0] };
 
                         _ = try to_string.getOrPutValue(
                             key,

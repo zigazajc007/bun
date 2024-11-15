@@ -1180,12 +1180,12 @@ pub const Lexer = struct {
 
     pub inline fn toString(lexer: *Lexer, loc_: logger.Loc) js_ast.Expr {
         if (lexer.string_literal_is_ascii) {
-            return js_ast.Expr.init(js_ast.E.String2, js_ast.E.String2.init(lexer.string_literal_slice), loc_);
+            return js_ast.Expr.init(js_ast.E.String, js_ast.E.String.init(lexer.string_literal_slice), loc_);
         }
 
         return js_ast.Expr.init(
-            js_ast.E.String2,
-            js_ast.E.String2.init(lexer.string_literal_slice),
+            js_ast.E.String,
+            js_ast.E.String.init(lexer.string_literal_slice),
             loc_,
         );
     }

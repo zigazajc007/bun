@@ -1916,8 +1916,8 @@ pub const PackCommand = struct {
                                 // if (parsed.valid) {
                                 //     dependency.value = Expr.allocate(
                                 //         ctx.manager.allocator,
-                                //         E.String2,
-                                //         E.String2.init(
+                                //         E.String,
+                                //         E.String.init(
                                 //             without_workspace_protocol,
                                 //         ),
                                 //         .{},
@@ -1944,8 +1944,8 @@ pub const PackCommand = struct {
 
                                             dependency.value = Expr.allocate(
                                                 allocator,
-                                                E.String2,
-                                                E.String2.init(
+                                                E.String,
+                                                E.String.init(
                                                     try std.fmt.allocPrint(allocator, "{s}{}", .{
                                                         switch (c) {
                                                             '^' => "^",
@@ -1973,8 +1973,8 @@ pub const PackCommand = struct {
 
                                 dependency.value = Expr.allocate(
                                     allocator,
-                                    E.String2,
-                                    E.String2.init(try allocator.dupe(u8, without_workspace_protocol)),
+                                    E.String,
+                                    E.String.init(try allocator.dupe(u8, without_workspace_protocol)),
                                     .{},
                                 );
                             }

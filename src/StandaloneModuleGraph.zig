@@ -1044,7 +1044,7 @@ pub const StandaloneModuleGraph = struct {
 
         const mappings_str = json.get("mappings") orelse
             return error.InvalidSourceMap;
-        if (mappings_str.data != .e_string_2)
+        if (mappings_str.data != .e_string)
             return error.InvalidSourceMap;
         const sources_content = switch ((json.get("sourcesContent") orelse return error.InvalidSourceMap).data) {
             .e_array => |arr| arr,
@@ -1058,7 +1058,7 @@ pub const StandaloneModuleGraph = struct {
             return error.InvalidSourceMap;
         }
 
-        const map_vlq: []const u8 = try mappings_str.data.e_string_2.toWtf8MayAlloc(arena);
+        const map_vlq: []const u8 = try mappings_str.data.e_string.toWtf8MayAlloc(arena);
 
         try out.writeInt(u32, sources_paths.items.len, .little);
         try out.writeInt(u32, @intCast(map_vlq.len), .little);
@@ -1069,10 +1069,10 @@ pub const StandaloneModuleGraph = struct {
             map_vlq.len;
 
         for (sources_paths.items.slice()) |item| {
-            if (item.data != .e_string_2)
+            if (item.data != .e_string)
                 return error.InvalidSourceMap;
 
-            const decoded = try item.data.e_string_2.dupe(arena);
+            const decoded = try item.data.e_string.dupe(arena);
 
             const offset = string_payload.items.len;
             try string_payload.appendSlice(decoded);
@@ -1086,10 +1086,10 @@ pub const StandaloneModuleGraph = struct {
         }
 
         for (sources_content.items.slice()) |item| {
-            if (item.data != .e_string_2)
+            if (item.data != .e_string)
                 return error.InvalidSourceMap;
 
-            const utf8 = try item.data.e_string_2.dupe(arena);
+            const utf8 = try item.data.e_string.dupe(arena);
             defer arena.free(utf8);
 
             const offset = string_payload.items.len;
