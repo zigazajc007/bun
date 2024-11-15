@@ -2355,7 +2355,7 @@ pub const E = struct {
         }
         pub fn dupeZ(self: *const String, alloc: std.mem.Allocator) ![:0]const u8 {
             const result = try alloc.alloc(u8, self.byteLength() + 1);
-            self.copyToSliceWtf8(result);
+            self.copyToSliceWtf8(result[0..self.byteLength()]);
             result[result.len - 1] = 0;
             return result[0 .. result.len - 1 :0];
         }
