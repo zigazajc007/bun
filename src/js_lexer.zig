@@ -653,7 +653,7 @@ fn NewLexer_(
                     // mark pairable
                     bun.assert(len == 3);
                     waiting_to_pair_codepoint = iter.c;
-                    waiting_to_pair_len = codepoint_buf.len;
+                    waiting_to_pair_len = buf.items.len;
                 }
             }
         }
