@@ -13734,7 +13734,8 @@ fn NewParser_(
         // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
         pub fn parseStringLiteral(p: *P) anyerror!Expr {
             const loc = p.lexer.loc();
-            const str = try p.lexer.toEString();
+            var str = try p.lexer.toEString();
+            str.is_from_template_string = true;
 
             const expr = p.newExpr(str, loc);
             try p.lexer.next();

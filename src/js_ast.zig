@@ -1517,7 +1517,7 @@ pub const E = struct {
             if (comptime Environment.allow_assert) {
                 for (this.items.slice()) |item| {
                     bun.assert(item.data == .e_string);
-                    bun.assert(item.data.e_string.* != .ascii_only_rope);
+                    bun.assert(item.data.e_string.value != .ascii_only_rope);
                 }
             }
             std.sort.pdq(Expr, this.items.slice(), {}, Sorter.isLessThan);
@@ -2144,7 +2144,7 @@ pub const E = struct {
             if (comptime Environment.allow_assert) {
                 for (this.properties.slice()) |prop| {
                     bun.assert(prop.key.?.data == .e_string);
-                    bun.assert(prop.key.?.data.e_string.* != .ascii_only_rope);
+                    bun.assert(prop.key.?.data.e_string.value != .ascii_only_rope);
                 }
             }
             std.sort.pdq(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
@@ -2215,21 +2215,28 @@ pub const E = struct {
 
     pub const Spread = struct { value: ExprNodeIndex };
 
-    pub const String = union(enum) {
+    pub const String = struct {
         /// wtf-8 needs care when concatenating. "\uD800" (len 1) + "\uDF34" (len 1) must equal "\u{10334}" (len 2).
         /// for now, constant folding is only implemented for ascii strings. making it support wtf8 shouldn't be too difficult,
         /// there just needs to be a possibility of mutation at the beginning and end of a string when concatenating, and the
         /// javascript length needs to be measured to create the rope string.
-        wtf8: []const u8,
-        ascii: []const u8,
-        ascii_only_rope: StringAsciiRopeHeader,
+        value: union(enum) {
+            wtf8: []const u8,
+            ascii: []const u8,
+            ascii_only_rope: StringAsciiRopeHeader,
+        },
+        /// this is used in two places:
+        /// - to determine if an E.String is a directive, ie "use strict";
+        /// - to prefer to preserve the string being a template literal in output when not minifying
+        /// it maybe isn't necessary
+        is_from_template_string: bool = false,
 
         /// contents_wtf8 must be valid wtf-8 (unpaired surrogates are allowed, but other invalid utf-8 is not). it is not
         /// duplicated by the string, so its lifetime must be as long as is needed for the E.String and it must not be modified
         /// while it is used by the E.String.
         pub fn init(contents_wtf8: []const u8) String {
             if (strings.isAllASCII(contents_wtf8)) {
-                return .{ .ascii = contents_wtf8 };
+                return .{ .value = .{ .ascii = contents_wtf8 } };
             }
             if (Environment.allow_assert) {
                 var i: usize = 0;
@@ -2251,7 +2258,7 @@ pub const E = struct {
                     i += seq_len;
                 }
             }
-            return .{ .wtf8 = contents_wtf8 };
+            return .{ .value = .{ .wtf8 = contents_wtf8 } };
         }
 
         /// Asserts both left and right are .isAsciiOnly() . Is allowed to mutate both left and
@@ -2273,7 +2280,7 @@ pub const E = struct {
             const result_slice = try arena.alloc(u8, left_len + right.byteLength());
             left.copyToSliceWtf8(result_slice[0..left_len]);
             right.copyToSliceWtf8(result_slice[left_len..]);
-            return .{ .ascii = result_slice };
+            return .{ .value = .{ .ascii = result_slice }, .is_from_template_string = left.is_from_template_string or right.is_from_template_string };
         }
 
         /// Asserts both left and right are .isAsciiOnly(). Mutates both left and right. Do
@@ -2290,27 +2297,28 @@ pub const E = struct {
             end.next = &right_rope.segment;
             left_rope.end = right_rope.end orelse &right_rope.segment;
             right_rope.setInvalid();
+            left.is_from_template_string = left.is_from_template_string or right.is_from_template_string;
         }
 
         fn mutateToRope(self: *String) *StringAsciiRopeHeader {
             bun.assert(self.isAsciiOnly());
-            switch (self.*) {
+            switch (self.value) {
                 .ascii => |a| {
                     const value = a;
-                    self.* = .{ .ascii_only_rope = .{
+                    self.* = .{ .value = .{ .ascii_only_rope = .{
                         .segment = .{ .value = value, .next = null },
                         .end = null,
                         .js_len = @truncate(value.len),
-                    } };
+                    } } };
                 },
                 .wtf8 => unreachable,
                 .ascii_only_rope => {},
             }
-            return &self.ascii_only_rope;
+            return &self.value.ascii_only_rope;
         }
 
         pub fn isAsciiOnly(self: *const String) bool {
-            return switch (self.*) {
+            return switch (self.value) {
                 .ascii => true,
                 .wtf8 => false,
                 .ascii_only_rope => true,
@@ -2318,7 +2326,7 @@ pub const E = struct {
         }
 
         pub fn byteLength(self: *const String) usize {
-            return switch (self.*) {
+            return switch (self.value) {
                 .ascii => |a| a.len,
                 .wtf8 => |a| a.len,
                 .ascii_only_rope => |a| a.js_len,
@@ -2329,7 +2337,7 @@ pub const E = struct {
         }
 
         pub fn jsLength(self: *const String) usize {
-            return switch (self.*) {
+            return switch (self.value) {
                 .ascii => |a| a.len,
                 .wtf8 => |a| {
                     var len: usize = 0;
@@ -2351,7 +2359,7 @@ pub const E = struct {
 
         /// For E.String s which are from the JSON parser. Asserts the string is not a rope string.
         pub fn asWtf8JSON(self: *const String) []const u8 {
-            return switch (self.*) {
+            return switch (self.value) {
                 .ascii => |a| a,
                 .wtf8 => |a| a,
                 else => @panic("asWtf8JSON called ascii_only_rope E.String"),
@@ -2359,14 +2367,14 @@ pub const E = struct {
         }
         pub fn copyToSliceWtf8(self: *const String, slice: []u8) void {
             bun.assert(self.byteLength() == slice.len);
-            switch (self.*) {
+            switch (self.value) {
                 .ascii => |a| @memcpy(slice, a),
                 .wtf8 => |a| @memcpy(slice, a),
                 .ascii_only_rope => |*a| a.copyToSliceWtf8(slice),
             }
         }
         pub fn toWtf8MayAlloc(self: *const String, arena: std.mem.Allocator) ![]const u8 {
-            switch (self.*) {
+            switch (self.value) {
                 .ascii => |a| return a,
                 .wtf8 => |a| return a,
                 .ascii_only_rope => |*a| {
@@ -2390,7 +2398,7 @@ pub const E = struct {
 
         pub fn hash(s: *const String) u64 {
             var hasher = std.hash.Wyhash.init(0);
-            switch (s.*) {
+            switch (s.value) {
                 .ascii => |a| hasher.update(a),
                 .wtf8 => |a| hasher.update(a),
                 .ascii_only_rope => |*a| {
@@ -2414,7 +2422,7 @@ pub const E = struct {
             );
         }
         pub fn eqlSlice(self: *const String, other: []const u8) bool {
-            return switch (self.*) {
+            return switch (self.value) {
                 .ascii => |a| strings.eqlLong(a, other, true),
                 .wtf8 => |a| strings.eqlLong(a, other, true),
                 .ascii_only_rope => |*a| {
@@ -2432,7 +2440,7 @@ pub const E = struct {
             };
         }
         pub fn eqlComptime(self: *const String, comptime other: []const u8) bool {
-            return switch (self.*) {
+            return switch (self.value) {
                 .ascii => |a| strings.eqlComptime(a, other),
                 .wtf8 => |a| strings.eqlComptime(a, other),
                 .ascii_only_rope => |*a| {
@@ -2451,7 +2459,7 @@ pub const E = struct {
         }
 
         pub fn toZigString(s: *const String, arena: std.mem.Allocator) !JSC.ZigString {
-            switch (s.*) {
+            switch (s.value) {
                 .ascii => |a| return JSC.ZigString.init(a),
                 .wtf8 => |a| return JSC.ZigString.initUTF8(a),
                 .ascii_only_rope => return JSC.ZigString.init(try s.toWtf8MayAlloc(arena)),
@@ -3433,7 +3441,7 @@ pub const Expr = struct {
         switch (expr.data) {
             .e_string => |str| {
                 const utf8_str = try str.toWtf8MayAlloc(allocator);
-                defer if (str.* == .ascii_only_rope) allocator.free(utf8_str);
+                defer if (str.value == .ascii_only_rope) allocator.free(utf8_str);
                 return hash_fn(utf8_str);
             },
             else => return null,
@@ -5534,7 +5542,7 @@ pub const Expr = struct {
                 },
 
                 .e_string => |e| {
-                    switch (e.*) {
+                    switch (e.value) {
                         .ascii => |a| {
                             hasher.update(a);
                         },
@@ -5589,7 +5597,7 @@ pub const Expr = struct {
                 .e_undefined,
                 .e_inlined_enum,
                 => true,
-                .e_string => |str| str.* != .ascii_only_rope,
+                .e_string => |str| str.value != .ascii_only_rope,
                 .e_array => |array| array.was_originally_macro,
                 .e_object => |object| object.was_originally_macro,
                 else => false,

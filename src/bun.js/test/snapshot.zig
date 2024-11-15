@@ -151,10 +151,10 @@ pub const Snapshots = struct {
                                 var index: *js_ast.E.String = left.data.e_index.index.data.e_string;
                                 if (target.ref.eql(exports_ref) and expr.value.data.e_binary.right.data == .e_string) {
                                     const key = try index.toWtf8MayAlloc(this.allocator);
-                                    defer if (index.* == .ascii_only_rope) this.allocator.free(key);
+                                    defer if (index.value == .ascii_only_rope) this.allocator.free(key);
                                     var value_string = expr.value.data.e_binary.right.data.e_string;
                                     const value = try value_string.toWtf8MayAlloc(this.allocator);
-                                    defer if (value_string.* == .ascii_only_rope) this.allocator.free(value);
+                                    defer if (value_string.value == .ascii_only_rope) this.allocator.free(value);
                                     const value_clone = try this.allocator.alloc(u8, value.len);
                                     bun.copy(u8, value_clone, value);
                                     const name_hash = bun.hash(key);
