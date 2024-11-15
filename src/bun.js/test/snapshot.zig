@@ -148,7 +148,7 @@ pub const Snapshots = struct {
                             const left = expr.value.data.e_binary.left;
                             if (left.data == .e_index and left.data.e_index.index.data == .e_string and left.data.e_index.target.data == .e_identifier) {
                                 const target: js_ast.E.Identifier = left.data.e_index.target.data.e_identifier;
-                                var index: *js_ast.E.String  = left.data.e_index.index.data.e_string;
+                                var index: *js_ast.E.String = left.data.e_index.index.data.e_string;
                                 if (target.ref.eql(exports_ref) and expr.value.data.e_binary.right.data == .e_string) {
                                     const key = try index.toWtf8MayAlloc(this.allocator);
                                     defer if (index.* == .ascii_only_rope) this.allocator.free(key);

@@ -2113,7 +2113,7 @@ fn NewLexer_(
             return lex;
         }
 
-        pub fn toEString(lexer: *LexerType) !js_ast.E.String  {
+        pub fn toEString(lexer: *LexerType) !js_ast.E.String {
             switch (lexer.string_literal_raw_format) {
                 .ascii, .utf8 => {
                     // string_literal_raw_content contains ascii without escapes
@@ -2132,7 +2132,7 @@ fn NewLexer_(
             }
         }
 
-        pub fn toUTF8EString(lexer: *LexerType) !js_ast.E.String  {
+        pub fn toUTF8EString(lexer: *LexerType) !js_ast.E.String {
             return lexer.toEString();
         }
 

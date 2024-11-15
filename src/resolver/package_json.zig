@@ -456,7 +456,7 @@ pub const PackageJSON = struct {
 
                         while (array.next()) |expr| {
                             if (expr.data != .e_string) continue;
-                            const e_str: *const js_ast.E.String  = expr.data.e_string;
+                            const e_str: *const js_ast.E.String = expr.data.e_string;
                             if (e_str.data.len == 0 or e_str.data[0] != '.') continue;
                             valid_count += 1;
                         }
@@ -469,7 +469,7 @@ pub const PackageJSON = struct {
                             // We don't need to allocate the strings because we keep the package.json source string in memory
                             while (array.next()) |expr| {
                                 if (expr.data != .e_string) continue;
-                                const e_str: *const js_ast.E.String  = expr.data.e_string;
+                                const e_str: *const js_ast.E.String = expr.data.e_string;
                                 if (e_str.data.len == 0 or e_str.data[0] != '.') continue;
                                 extensions[i] = e_str.data;
                                 i += 1;
