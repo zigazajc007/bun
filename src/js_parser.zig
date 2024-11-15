@@ -12217,22 +12217,23 @@ fn NewParser_(
                         .s_expr => |expr| {
                             switch (expr.value.data) {
                                 .e_string => |str| {
-                                    // TODO: previously, this would check str.prefer_template so that `use strict`; didn't count as a directive. bring this back.
-                                    isDirectivePrologue = true;
+                                    if (!str.is_from_template_string) {
+                                        isDirectivePrologue = true;
 
-                                    if (str.eqlComptime("use strict")) {
-                                        skip = true;
-                                        // Track "use strict" directives
-                                        p.current_scope.strict_mode = .explicit_strict_mode;
-                                        if (p.current_scope == p.module_scope)
-                                            p.module_scope_directive_loc = stmt.loc;
-                                    } else if (str.eqlComptime("use asm")) {
-                                        skip = true;
-                                        stmt.data = Prefill.Data.SEmpty;
-                                    } else {
-                                        stmt = Stmt.alloc(S.Directive, S.Directive{
-                                            .value = try str.toWtf8MayAlloc(p.allocator),
-                                        }, stmt.loc);
+                                        if (str.eqlComptime("use strict")) {
+                                            skip = true;
+                                            // Track "use strict" directives
+                                            p.current_scope.strict_mode = .explicit_strict_mode;
+                                            if (p.current_scope == p.module_scope)
+                                                p.module_scope_directive_loc = stmt.loc;
+                                        } else if (str.eqlComptime("use asm")) {
+                                            skip = true;
+                                            stmt.data = Prefill.Data.SEmpty;
+                                        } else {
+                                            stmt = Stmt.alloc(S.Directive, S.Directive{
+                                                .value = try str.toWtf8MayAlloc(p.allocator),
+                                            }, stmt.loc);
+                                        }
                                     }
                                 },
                                 else => {},
@@ -13735,7 +13736,7 @@ fn NewParser_(
         pub fn parseStringLiteral(p: *P) anyerror!Expr {
             const loc = p.lexer.loc();
             var str = try p.lexer.toEString();
-            str.is_from_template_string = true;
+            str.is_from_template_string = p.lexer.token == .t_no_substitution_template_literal;
 
             const expr = p.newExpr(str, loc);
             try p.lexer.next();

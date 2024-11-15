@@ -2726,6 +2726,12 @@ fn NewPrinter(
                     const value = e.toWtf8MayAlloc(p.options.allocator) catch bun.outOfMemory();
                     p.addSourceMapping(expr.loc);
 
+                    if (e.is_from_template_string and !p.options.minify_syntax) {
+                        p.print("`");
+                        p.printStringCharactersUTF8(value, '`');
+                        p.print("`");
+                        return;
+                    }
                     p.printStringLiteralUTF8(value, true);
                 },
                 .e_template => |e| {
