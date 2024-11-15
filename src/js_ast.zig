@@ -2224,9 +2224,32 @@ pub const E = struct {
         ascii: []const u8,
         ascii_only_rope: StringAsciiRopeHeader,
 
+        /// contents_wtf8 must be valid wtf-8 (unpaired surrogates are allowed, but other invalid utf-8 is not). it is not
+        /// duplicated by the string, so its lifetime must be as long as is needed for the E.String and it must not be modified
+        /// while it is used by the E.String.
         pub fn init(contents_wtf8: []const u8) String {
             if (strings.isAllASCII(contents_wtf8)) {
                 return .{ .ascii = contents_wtf8 };
+            }
+            if (Environment.allow_assert) {
+                var i: usize = 0;
+                while (i < contents_wtf8.len) {
+                    const remaining = contents_wtf8[i..];
+                    const seq_len = strings.utf8ByteSequenceLength(remaining[0]);
+                    bun.assert(seq_len > 0);
+
+                    const arr: [4]u8 = switch (seq_len) {
+                        1 => .{ remaining[0], 0, 0, 0 },
+                        2 => remaining[0..2].* ++ .{ 0, 0 },
+                        3 => remaining[0..3].* ++ .{0},
+                        4 => remaining[0..4].*,
+                        else => unreachable,
+                    };
+                    const codepoint = strings.decodeWTF8RuneT(&arr, seq_len, i32, -1);
+                    bun.assert(codepoint >= 0);
+
+                    i += seq_len;
+                }
             }
             return .{ .wtf8 = contents_wtf8 };
         }
@@ -2305,11 +2328,23 @@ pub const E = struct {
             return self.byteLength() == 0;
         }
 
-        pub fn jsLength(self: *const String) ?usize {
+        pub fn jsLength(self: *const String) usize {
             return switch (self.*) {
                 .ascii => |a| a.len,
-                .wtf8 => null, // TODO: measure the js length of the string.
-                // ^ read one wtf-8 codepoint at a time. if the value of the codepoint is greater than 0xFFFF, add two to count. else, add one to count. return the count.
+                .wtf8 => |a| {
+                    var len: usize = 0;
+                    for (a) |char| {
+                        switch (char) {
+                            // requires two utf-16 code units to represent
+                            0xF0...0xFF => len += 2,
+                            // start of a single or multi byte codepoint, requires one code unit
+                            0x00...0x7F, 0xC0...0xEF => len += 1,
+                            // follows a start byte; ignore
+                            0x80...0xBF => {},
+                        }
+                    }
+                    return len;
+                },
                 .ascii_only_rope => |a| a.js_len,
             };
         }
@@ -2451,6 +2486,7 @@ pub const E = struct {
             }
         }
     };
+    /// rope to enable fast concatenation folding of strings. this rope doesn't support substrings.
     pub const StringAsciiRopeHeader = struct {
         segment: StringAsciiRopeSegment,
         end: ?*StringAsciiRopeSegment,

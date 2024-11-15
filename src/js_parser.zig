@@ -18626,9 +18626,7 @@ fn NewParser_(
                     if (p.options.features.minify_syntax) {
                         // minify "long-string".length to 11
                         if (strings.eqlComptime(name, "length")) {
-                            if (str.jsLength()) |len| {
-                                return p.newExpr(E.Number{ .value = @floatFromInt(len) }, loc);
-                            }
+                            return p.newExpr(E.Number{ .value = @floatFromInt(str.jsLength()) }, loc);
                         }
                     }
                 },

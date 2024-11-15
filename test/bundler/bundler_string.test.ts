@@ -114,6 +114,19 @@ const templateStringTests: Record<string, TemplateStringTest> = {
   Eql4: { expr: '"" + (("a" + "b") === "aa")', capture: true },
   Eql5: { expr: '"" + (("0" + "1") == 0)', print: true },
   Eql6: { expr: '"" + (("\\uD800" + "\\uDF34") === "\\u{10334}")', print: true },
+  FoldLength1: { expr: '"" + "abc".length', capture: true },
+  FoldLength2: { expr: '"" + "a\\uD800c".length', capture: true },
+  FoldLength2_: { expr: '"" + "a\uD800c".length', capture: true },
+  FoldLength3: { expr: '"" + "a\\uD800\\uDF34c".length', capture: true },
+  FoldLength3_: { expr: '"" + "a\uD800\uDF34c".length', capture: true },
+  FoldLength4: { expr: '"" + "a\\u{10334}c".length', capture: true },
+  FoldLength4_: { expr: '"" + "a\u{10334}c".length', capture: true },
+  FoldLength5: { expr: '"" + "a\\uDF34\\uD800c".length', capture: true },
+  FoldLength5_: { expr: '"" + "a\uDF34\uD800c".length', capture: true },
+  FoldLength6: { expr: '"" + "â€™".length', capture: true },
+  FoldLength7: { expr: '"" + ("\\n" + "\x00").length', capture: true },
+  FoldLength8: { expr: '"" + ("æ" + "™").length', print: true },
+  FoldLength9: { expr: '"" + ("\\uD800" + "\\uDF34").length', print: true },
 };
 
 describe("bundler", () => {
