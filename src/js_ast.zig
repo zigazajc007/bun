@@ -2365,13 +2365,6 @@ pub const E = struct {
                 .ascii_only_rope => |*a| a.copyToSliceWtf8(slice),
             }
         }
-        pub fn asWtf8(self: *const String) ?[]const u8 {
-            return switch (self.*) {
-                .ascii => |a| a,
-                .wtf8 => |a| a,
-                else => null,
-            };
-        }
         pub fn toWtf8MayAlloc(self: *const String, arena: std.mem.Allocator) ![]const u8 {
             switch (self.*) {
                 .ascii => |a| return a,
@@ -5768,25 +5761,19 @@ pub const Expr = struct {
             return @as(Expr.Tag, data).typeof();
         }
 
-        pub fn toNumber(data: Expr.Data) ?f64 {
+        pub fn toNumber(data: Expr.Data, arena: std.mem.Allocator) ?f64 {
             return switch (data) {
                 .e_null => 0,
                 .e_undefined => std.math.nan(f64),
                 .e_string => |str| {
-                    if (str.asWtf8()) |value| {
-                        return stringToEquivalentNumberValue(value);
-                    }
-                    return null;
+                    return stringToEquivalentNumberValue(str.toWtf8MayAlloc(arena) catch bun.outOfMemory());
                 },
                 .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
                 .e_number => data.e_number.value,
                 .e_inlined_enum => |inlined| switch (inlined.value.data) {
                     .e_number => |num| num.value,
                     .e_string => |str| {
-                        if (str.asWtf8()) |value| {
-                            return stringToEquivalentNumberValue(value);
-                        }
-                        return null;
+                        return stringToEquivalentNumberValue(str.toWtf8MayAlloc(arena) catch bun.outOfMemory());
                     },
                     else => null,
                 },

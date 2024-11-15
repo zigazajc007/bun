@@ -16779,7 +16779,7 @@ fn NewParser_(
                                 },
                                 .un_cpl => {
                                     if (p.should_fold_typescript_constant_expressions) {
-                                        if (SideEffects.toNumber(e_.value.data)) |value| {
+                                        if (SideEffects.toNumber(e_.value.data, p.allocator)) |value| {
                                             return p.newExpr(E.Number{
                                                 .value = @floatFromInt(~floatToInt32(value)),
                                             }, expr.loc);
@@ -16792,12 +16792,12 @@ fn NewParser_(
                                     }
                                 },
                                 .un_pos => {
-                                    if (SideEffects.toNumber(e_.value.data)) |num| {
+                                    if (SideEffects.toNumber(e_.value.data, p.allocator)) |num| {
                                         return p.newExpr(E.Number{ .value = num }, expr.loc);
                                     }
                                 },
                                 .un_neg => {
-                                    if (SideEffects.toNumber(e_.value.data)) |num| {
+                                    if (SideEffects.toNumber(e_.value.data, p.allocator)) |num| {
                                         return p.newExpr(E.Number{ .value = -num }, expr.loc);
                                     }
                                 },
