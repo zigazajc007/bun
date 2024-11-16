@@ -298,9 +298,9 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                             // .e_string.
                             if (left.parts.len > 0) {
                                 const i = left.parts.len - 1;
-                                const last = left.parts[i];
+                                const last = &left.parts[i];
                                 if (last.tail == .cooked and last.tail.cooked.isAsciiOnly()) {
-                                    left.parts[i].tail = .{ .cooked = last.tail.cooked.concat(right, r.data != .e_inlined_enum, allocator) };
+                                    last.tail = .{ .cooked = last.tail.cooked.concat(right, r.data != .e_inlined_enum, allocator) };
                                     return lhs;
                                 }
                             } else {
@@ -316,8 +316,8 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                         if (right.tag == null and right.head == .cooked and right.head.cooked.isAsciiOnly()) {
                             if (left.parts.len > 0) {
                                 const i = left.parts.len - 1;
-                                const last = left.parts[i];
-                                if (last.tail == .cooked and last.tail.cooked.isAsciiOnly() and right.head == .cooked and right.head.cooked.isAsciiOnly()) {
+                                const last = &left.parts[i];
+                                if (last.tail == .cooked and last.tail.cooked.isAsciiOnly()) {
                                     left.parts[i].tail = .{ .cooked = last.tail.cooked.concat(&right.head.cooked, r.data != .e_inlined_enum, allocator) };
 
                                     left.parts = if (right.parts.len == 0)
@@ -331,7 +331,7 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                     return lhs;
                                 }
                             } else {
-                                if (left.head == .cooked and left.head.cooked.isAsciiOnly() and right.head == .cooked and right.head.cooked.isAsciiOnly()) {
+                                if (left.head == .cooked and left.head.cooked.isAsciiOnly()) {
                                     left.head = .{ .cooked = left.head.cooked.concat(&right.head.cooked, r.data != .e_inlined_enum, allocator) };
                                     left.parts = right.parts;
                                     return lhs;
