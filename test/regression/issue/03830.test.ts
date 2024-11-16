@@ -15,7 +15,10 @@ it("macros should not lead to seg faults under any given input", async () => {
   // Create a directory with our test file
   mkdirSync(testDir, { recursive: true });
   writeFileSync(join(testDir, "macro.ts"), "export function fn(str) { return str; }");
-  writeFileSync(join(testDir, "index.ts"), "import { fn } from './macro' assert { type: 'macro' };\nfn(`©${''}`);");
+  writeFileSync(
+    join(testDir, "index.ts"),
+    "import { fn } from './macro' assert { type: 'macro' };\nfn(`©${Number(0)}`);",
+  );
   testDir = realpathSync(testDir);
 
   const { stderr, exitCode } = Bun.spawnSync({
@@ -23,6 +26,8 @@ it("macros should not lead to seg faults under any given input", async () => {
     env: bunEnv,
     stderr: "pipe",
   });
+
+  console.log(testDir);
 
   expect(stderr.toString().trim().replaceAll(testDir, "[dir]").replaceAll("\\", "/")).toMatchSnapshot();
   expect(exitCode).toBe(1);
