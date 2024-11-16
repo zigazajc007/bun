@@ -243,35 +243,31 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                 rhs = str;
             }
 
-            if (left.isAsciiOnly()) {
-                switch (rhs.data) {
-                    // "bar" + "baz" => "barbaz"
-                    .e_string => |right| {
-                        if (right.isAsciiOnly()) {
-                            const has_inlined_enum_poison =
-                                l.data == .e_inlined_enum or
-                                r.data == .e_inlined_enum;
+            switch (rhs.data) {
+                // "bar" + "baz" => "barbaz"
+                .e_string => |right| {
+                    const has_inlined_enum_poison =
+                        l.data == .e_inlined_enum or
+                        r.data == .e_inlined_enum;
 
-                            return Expr.init(E.String, left.concat(right, !has_inlined_enum_poison, allocator), l.loc);
-                        }
-                    },
-                    // "bar" + `baz${bar}` => `barbaz${bar}`
-                    .e_template => |right| {
-                        if (right.head == .cooked and right.head.cooked.isAsciiOnly()) {
-                            return Expr.init(E.Template, E.Template{
-                                .parts = right.parts,
-                                .head = .{ .cooked = left.concat(&right.head.cooked, l.data != .e_inlined_enum, allocator) },
-                            }, l.loc);
-                        }
-                    },
-                    else => {
-                        // other constant-foldable ast nodes would have been converted to .e_string
-                    },
-                }
-
-                // "'x' + `y${z}`" => "`xy${z}`"
-                if (rhs.data == .e_template and rhs.data.e_template.tag == null) {}
+                    return Expr.init(E.String, left.concat(right, !has_inlined_enum_poison, allocator), l.loc);
+                },
+                // "bar" + `baz${bar}` => `barbaz${bar}`
+                .e_template => |right| {
+                    if (right.head == .cooked) {
+                        return Expr.init(E.Template, E.Template{
+                            .parts = right.parts,
+                            .head = .{ .cooked = left.concat(&right.head.cooked, l.data != .e_inlined_enum, allocator) },
+                        }, l.loc);
+                    }
+                },
+                else => {
+                    // other constant-foldable ast nodes would have been converted to .e_string
+                },
             }
+
+            // "'x' + `y${z}`" => "`xy${z}`"
+            if (rhs.data == .e_template and rhs.data.e_template.tag == null) {}
 
             if (left.isEmpty() and rhs.knownPrimitive() == .string) {
                 return rhs;
@@ -290,34 +286,32 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                 switch (rhs.data) {
                     // `foo${bar}` + "baz" => `foo${bar}baz`
                     .e_string => |right| {
-                        if (right.isAsciiOnly()) {
-                            // Mutation of this node is fine because it will be not
-                            // be shared by other places. Note that e_template will
-                            // be treated by enums as strings, but will not be
-                            // inlined unless they could be converted into
-                            // .e_string.
-                            if (left.parts.len > 0) {
-                                const i = left.parts.len - 1;
-                                const last = &left.parts[i];
-                                if (last.tail == .cooked and last.tail.cooked.isAsciiOnly()) {
-                                    last.tail = .{ .cooked = last.tail.cooked.concat(right, r.data != .e_inlined_enum, allocator) };
-                                    return lhs;
-                                }
-                            } else {
-                                if (left.head == .cooked and left.head.cooked.isAsciiOnly()) {
-                                    left.head = .{ .cooked = left.head.cooked.concat(right, r.data != .e_inlined_enum, allocator) };
-                                    return lhs;
-                                }
+                        // Mutation of this node is fine because it will be not
+                        // be shared by other places. Note that e_template will
+                        // be treated by enums as strings, but will not be
+                        // inlined unless they could be converted into
+                        // .e_string.
+                        if (left.parts.len > 0) {
+                            const i = left.parts.len - 1;
+                            const last = &left.parts[i];
+                            if (last.tail == .cooked) {
+                                last.tail = .{ .cooked = last.tail.cooked.concat(right, r.data != .e_inlined_enum, allocator) };
+                                return lhs;
+                            }
+                        } else {
+                            if (left.head == .cooked) {
+                                left.head = .{ .cooked = left.head.cooked.concat(right, r.data != .e_inlined_enum, allocator) };
+                                return lhs;
                             }
                         }
                     },
                     // `foo${bar}` + `a${hi}b` => `foo${bar}a${hi}b`
                     .e_template => |right| {
-                        if (right.tag == null and right.head == .cooked and right.head.cooked.isAsciiOnly()) {
+                        if (right.tag == null and right.head == .cooked) {
                             if (left.parts.len > 0) {
                                 const i = left.parts.len - 1;
                                 const last = &left.parts[i];
-                                if (last.tail == .cooked and last.tail.cooked.isAsciiOnly()) {
+                                if (last.tail == .cooked) {
                                     left.parts[i].tail = .{ .cooked = last.tail.cooked.concat(&right.head.cooked, r.data != .e_inlined_enum, allocator) };
 
                                     left.parts = if (right.parts.len == 0)
@@ -331,7 +325,7 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                     return lhs;
                                 }
                             } else {
-                                if (left.head == .cooked and left.head.cooked.isAsciiOnly()) {
+                                if (left.head == .cooked) {
                                     left.head = .{ .cooked = left.head.cooked.concat(&right.head.cooked, r.data != .e_inlined_enum, allocator) };
                                     left.parts = right.parts;
                                     return lhs;
@@ -21364,7 +21358,7 @@ fn NewParser_(
                 // we do, but only if it's a UTF8 string
                 // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
                 .e_index => |index| {
-                    if (parts.len > 1 and index.index.data == .e_string and index.index.data.e_string.isAsciiOnly()) {
+                    if (parts.len > 1 and index.index.data == .e_string) {
                         if (index.optional_chain != null) {
                             return false;
                         }
