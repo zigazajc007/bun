@@ -1517,7 +1517,7 @@ pub const E = struct {
             if (comptime Environment.allow_assert) {
                 for (this.items.slice()) |item| {
                     bun.assert(item.data == .e_string);
-                    bun.assert(item.data.e_string.value != .ascii_only_rope);
+                    bun.assert(item.data.e_string.tag != .ascii_only_rope);
                 }
             }
             std.sort.pdq(Expr, this.items.slice(), {}, Sorter.isLessThan);
@@ -2144,7 +2144,7 @@ pub const E = struct {
             if (comptime Environment.allow_assert) {
                 for (this.properties.slice()) |prop| {
                     bun.assert(prop.key.?.data == .e_string);
-                    bun.assert(prop.key.?.data.e_string.value != .ascii_only_rope);
+                    bun.assert(prop.key.?.data.e_string.tag != .ascii_only_rope);
                 }
             }
             std.sort.pdq(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
@@ -2216,27 +2216,40 @@ pub const E = struct {
     pub const Spread = struct { value: ExprNodeIndex };
 
     pub const String = struct {
-        /// wtf-8 needs care when concatenating. "\uD800" (len 1) + "\uDF34" (len 1) must equal "\u{10334}" (len 2).
-        /// for now, constant folding is only implemented for ascii strings. making it support wtf8 shouldn't be too difficult,
-        /// there just needs to be a possibility of mutation at the beginning and end of a string when concatenating, and the
-        /// javascript length needs to be measured to create the rope string.
-        value: union(enum) {
-            wtf8: []const u8,
-            ascii: []const u8,
-            ascii_only_rope: StringAsciiRopeHeader,
+        tag: enum {
+            /// wtf-8 needs care when concatenating. "\uD800" (len 1) + "\uDF34" (len 1) must equal "\u{10334}" (len 2).
+            /// for now, constant folding is only implemented for ascii strings. making it support wtf8 shouldn't be too difficult,
+            /// there just needs to be a possibility of mutation at the beginning and end of a string when concatenating.
+            wtf8,
+            ascii,
+            ascii_only_rope,
         },
+
         /// this is used in two places:
         /// - to determine if an E.String is a directive, ie "use strict";
         /// - to prefer to preserve the string being a template literal in output when not minifying
         /// it maybe isn't necessary
         is_from_template_string: bool = false,
 
+        /// for all strings. either contains the whole string, or the first segment if it is part of a rope.
+        /// prefer .asWtf8JSON() or .toWtf8MayAlloc() over accessing this directly.
+        _value_or_segment_value: []const u8,
+        /// only used for rope strings
+        _rope_segment_next: ?*String = null,
+        /// only defined for the first segment of a rope string.
+        _rope_segment_last: ?*String = null,
+        /// only used for rope strings
+        _rope_byte_len: u32 = 0,
+
         /// contents_wtf8 must be valid wtf-8 (unpaired surrogates are allowed, but other invalid utf-8 is not). it is not
         /// duplicated by the string, so its lifetime must be as long as is needed for the E.String and it must not be modified
         /// while it is used by the E.String.
         pub fn init(contents_wtf8: []const u8) String {
             if (strings.isAllASCII(contents_wtf8)) {
-                return .{ .value = .{ .ascii = contents_wtf8 } };
+                return .{
+                    .tag = .ascii,
+                    ._value_or_segment_value = contents_wtf8,
+                };
             }
             if (Environment.allow_assert) {
                 var i: usize = 0;
@@ -2258,7 +2271,10 @@ pub const E = struct {
                     i += seq_len;
                 }
             }
-            return .{ .value = .{ .wtf8 = contents_wtf8 } };
+            return .{
+                .tag = .wtf8,
+                ._value_or_segment_value = contents_wtf8,
+            };
         }
 
         /// Asserts both left and right are .isAsciiOnly() . Is allowed to mutate both left and
@@ -2280,7 +2296,11 @@ pub const E = struct {
             const result_slice = try arena.alloc(u8, left_len + right.byteLength());
             left.copyToSliceWtf8(result_slice[0..left_len]);
             right.copyToSliceWtf8(result_slice[left_len..]);
-            return .{ .value = .{ .ascii = result_slice }, .is_from_template_string = left.is_from_template_string or right.is_from_template_string };
+            return .{
+                .tag = .ascii,
+                .is_from_template_string = left.is_from_template_string or right.is_from_template_string,
+                ._value_or_segment_value = result_slice,
+            };
         }
 
         /// Asserts both left and right are .isAsciiOnly(). Mutates both left and right. Do
@@ -2288,37 +2308,39 @@ pub const E = struct {
         /// expressions are duplicated and it will mess up other code to mutate the
         /// string in one.
         pub fn pushMutateBoth(left: *String, right: *String) void {
-            const left_rope = left.mutateToRope();
-            const right_rope = right.mutateToRope();
-            left_rope.js_len += right_rope.js_len;
+            left.mutateToRope();
+            right.mutateToRope();
+            left._rope_byte_len += right._rope_byte_len;
 
-            const end = left_rope.end orelse &left_rope.segment;
-            bun.assert(end.next == null);
-            end.next = &right_rope.segment;
-            left_rope.end = right_rope.end orelse &right_rope.segment;
-            right_rope.setInvalid();
+            const end = left._rope_segment_last orelse left;
+            bun.assert(end._rope_segment_next == null);
+            end._rope_segment_next = right;
+            left._rope_segment_last = right._rope_segment_last orelse right;
+            right._ropeSetInvalid();
             left.is_from_template_string = left.is_from_template_string or right.is_from_template_string;
         }
 
-        fn mutateToRope(self: *String) *StringAsciiRopeHeader {
+        fn mutateToRope(self: *String) void {
             bun.assert(self.isAsciiOnly());
-            switch (self.value) {
-                .ascii => |a| {
-                    const value = a;
-                    self.* = .{ .value = .{ .ascii_only_rope = .{
-                        .segment = .{ .value = value, .next = null },
-                        .end = null,
-                        .js_len = @truncate(value.len),
-                    } } };
+            switch (self.tag) {
+                .ascii => {
+                    const value = self._value_or_segment_value;
+                    self.* = .{
+                        .tag = .ascii_only_rope,
+                        .is_from_template_string = self.is_from_template_string,
+                        ._value_or_segment_value = value,
+                        ._rope_segment_next = null,
+                        ._rope_segment_last = null,
+                        ._rope_byte_len = @truncate(value.len),
+                    };
                 },
                 .wtf8 => unreachable,
                 .ascii_only_rope => {},
             }
-            return &self.value.ascii_only_rope;
         }
 
         pub fn isAsciiOnly(self: *const String) bool {
-            return switch (self.value) {
+            return switch (self.tag) {
                 .ascii => true,
                 .wtf8 => false,
                 .ascii_only_rope => true,
@@ -2326,9 +2348,9 @@ pub const E = struct {
         }
 
         pub fn byteLength(self: *const String) usize {
-            return switch (self.value) {
-                .ascii, .wtf8 => |a| a.len,
-                .ascii_only_rope => |a| a.js_len,
+            return switch (self.tag) {
+                .ascii, .wtf8 => self._value_or_segment_value.len,
+                .ascii_only_rope => self._rope_byte_len,
             };
         }
         pub fn isEmpty(self: *const String) bool {
@@ -2336,11 +2358,11 @@ pub const E = struct {
         }
 
         pub fn jsLength(self: *const String) usize {
-            return switch (self.value) {
-                .ascii => |a| a.len,
-                .wtf8 => |a| {
+            return switch (self.tag) {
+                .ascii => self._value_or_segment_value.len,
+                .wtf8 => {
                     var len: usize = 0;
-                    for (a) |char| {
+                    for (self._value_or_segment_value) |char| {
                         switch (char) {
                             // requires two utf-16 code units to represent
                             0xF0...0xFF => len += 2,
@@ -2352,30 +2374,30 @@ pub const E = struct {
                     }
                     return len;
                 },
-                .ascii_only_rope => |a| a.js_len,
+                .ascii_only_rope => self._rope_byte_len,
             };
         }
 
         /// For E.String s which are from the JSON parser. Asserts the string is not a rope string.
         pub fn asWtf8JSON(self: *const String) []const u8 {
-            return switch (self.value) {
-                .ascii, .wtf8 => |a| a,
+            return switch (self.tag) {
+                .ascii, .wtf8 => self._value_or_segment_value,
                 else => @panic("asWtf8JSON called ascii_only_rope E.String"),
             };
         }
         pub fn copyToSliceWtf8(self: *const String, slice: []u8) void {
             bun.assert(self.byteLength() == slice.len);
-            switch (self.value) {
-                .ascii, .wtf8 => |a| @memcpy(slice, a),
-                .ascii_only_rope => |*a| a.copyToSliceWtf8(slice),
+            switch (self.tag) {
+                .ascii, .wtf8 => @memcpy(slice, self._value_or_segment_value),
+                .ascii_only_rope => self._ropeCopyToSliceWtf8(slice),
             }
         }
         pub fn toWtf8MayAlloc(self: *const String, arena: std.mem.Allocator) ![]const u8 {
-            switch (self.value) {
-                .ascii, .wtf8 => |a| return a,
-                .ascii_only_rope => |*a| {
-                    const result = try arena.alloc(u8, a.js_len);
-                    a.copyToSliceWtf8(result);
+            switch (self.tag) {
+                .ascii, .wtf8 => return self._value_or_segment_value,
+                .ascii_only_rope => {
+                    const result = try arena.alloc(u8, self._rope_byte_len);
+                    self._ropeCopyToSliceWtf8(result);
                     return result;
                 },
             }
@@ -2394,12 +2416,12 @@ pub const E = struct {
 
         pub fn hash(s: *const String) u64 {
             var hasher = std.hash.Wyhash.init(0);
-            switch (s.value) {
-                .ascii, .wtf8 => |a| hasher.update(a),
-                .ascii_only_rope => |*a| {
-                    var next: ?*const StringAsciiRopeSegment = &a.segment;
-                    while (next) |current| : (next = current.next) {
-                        hasher.update(current.value);
+            switch (s.tag) {
+                .ascii, .wtf8 => hasher.update(s._value_or_segment_value),
+                .ascii_only_rope => {
+                    var next: ?*const String = s;
+                    while (next) |current| : (next = current._rope_segment_next) {
+                        hasher.update(current._value_or_segment_value);
                     }
                 },
             }
@@ -2417,16 +2439,16 @@ pub const E = struct {
             );
         }
         pub fn eqlSlice(self: *const String, other: []const u8) bool {
-            return switch (self.value) {
-                .ascii, .wtf8 => |a| strings.eqlLong(a, other, true),
-                .ascii_only_rope => |*a| {
+            return switch (self.tag) {
+                .ascii, .wtf8 => strings.eqlLong(self._value_or_segment_value, other, true),
+                .ascii_only_rope => {
                     // alternatively, we can make self be *String and collapse the rope
-                    if (a.js_len != other.len) return false;
+                    if (self._rope_byte_len != other.len) return false;
                     var i: usize = 0;
-                    var next: ?*const StringAsciiRopeSegment = &a.segment;
-                    while (next) |current| : (next = current.next) {
-                        if (!strings.eqlLong(current.value, other[i..][0..current.value.len], false)) return false;
-                        i += current.value.len;
+                    var next: ?*const String = self;
+                    while (next) |current| : (next = current._rope_segment_next) {
+                        if (!strings.eqlLong(current._value_or_segment_value, other[i..][0..current._value_or_segment_value.len], false)) return false;
+                        i += current._value_or_segment_value.len;
                     }
                     bun.assert(i == other.len);
                     return true;
@@ -2434,16 +2456,16 @@ pub const E = struct {
             };
         }
         pub fn eqlComptime(self: *const String, comptime other: []const u8) bool {
-            return switch (self.value) {
-                .ascii, .wtf8 => |a| strings.eqlComptime(a, other),
-                .ascii_only_rope => |*a| {
+            return switch (self.tag) {
+                .ascii, .wtf8 => strings.eqlComptime(self._value_or_segment_value, other),
+                .ascii_only_rope => {
                     // alternatively, we can make self be *String and collapse the rope
-                    if (a.js_len != other.len) return false;
+                    if (self._rope_byte_len != other.len) return false;
                     var i: usize = 0;
-                    var next: ?*const StringAsciiRopeSegment = &a.segment;
-                    while (next) |current| : (next = current.next) {
-                        if (!strings.eqlLong(current.value, other[i..][0..current.value.len], false)) return false;
-                        i += current.value.len;
+                    var next: ?*const String = self;
+                    while (next) |current| : (next = current._rope_segment_next) {
+                        if (!strings.eqlLong(current._value_or_segment_value, other[i..][0..current._value_or_segment_value.len], false)) return false;
+                        i += current._value_or_segment_value.len;
                     }
                     bun.assert(i == other.len);
                     return true;
@@ -2452,9 +2474,9 @@ pub const E = struct {
         }
 
         pub fn toZigString(s: *const String, arena: std.mem.Allocator) !JSC.ZigString {
-            switch (s.value) {
-                .ascii => |a| return JSC.ZigString.init(a),
-                .wtf8 => |a| return JSC.ZigString.initUTF8(a),
+            switch (s.tag) {
+                .ascii => return JSC.ZigString.init(s._value_or_segment_value),
+                .wtf8 => return JSC.ZigString.initUTF8(s._value_or_segment_value),
                 .ascii_only_rope => return JSC.ZigString.init(try s.toWtf8MayAlloc(arena)),
             }
         }
@@ -2479,24 +2501,20 @@ pub const E = struct {
                 return out.toJS(globalObject);
             }
         }
-    };
-    /// rope to enable fast concatenation folding of strings. this rope doesn't support substrings.
-    pub const StringAsciiRopeHeader = struct {
-        segment: StringAsciiRopeSegment,
-        end: ?*StringAsciiRopeSegment,
-        js_len: u32 = 0,
-        fn setInvalid(self: *StringAsciiRopeHeader) void {
-            self.js_len = 0;
-            self.end = null;
+
+        fn _ropeSetInvalid(self: *String) void {
+            self._rope_byte_len = 0;
+            self._rope_segment_last = null;
         }
-        fn copyToSliceWtf8(self: *const StringAsciiRopeHeader, slice: []u8) void {
-            bun.assert(self.js_len == slice.len);
+        fn _ropeCopyToSliceWtf8(self: *const String, slice: []u8) void {
+            bun.assert(self.tag == .ascii_only_rope);
+            bun.assert(self._rope_byte_len == slice.len);
 
             var i: usize = 0;
-            var next: ?*const StringAsciiRopeSegment = &self.segment;
-            while (next) |current| : (next = current.next) {
-                @memcpy(slice[i..][0..current.value.len], current.value);
-                i += current.value.len;
+            var next: ?*const String = self;
+            while (next) |current| : (next = current._rope_segment_next) {
+                @memcpy(slice[i..][0..current._value_or_segment_value.len], current._value_or_segment_value);
+                i += current._value_or_segment_value.len;
             }
             bun.assert(i == slice.len);
         }
@@ -3434,7 +3452,7 @@ pub const Expr = struct {
         switch (expr.data) {
             .e_string => |str| {
                 const utf8_str = try str.toWtf8MayAlloc(allocator);
-                defer if (str.value == .ascii_only_rope) allocator.free(utf8_str);
+                defer if (str.tag == .ascii_only_rope) allocator.free(utf8_str);
                 return hash_fn(utf8_str);
             },
             else => return null,
@@ -5535,14 +5553,14 @@ pub const Expr = struct {
                 },
 
                 .e_string => |e| {
-                    switch (e.value) {
-                        .ascii, .wtf8 => |a| {
-                            hasher.update(a);
+                    switch (e.tag) {
+                        .ascii, .wtf8 => {
+                            hasher.update(e._value_or_segment_value);
                         },
-                        .ascii_only_rope => |*a| {
-                            var next: ?*E.StringAsciiRopeSegment = &a.segment;
-                            while (next) |current| : (next = current.next) {
-                                hasher.update(current.value);
+                        .ascii_only_rope => {
+                            var next: ?*E.String = e;
+                            while (next) |current| : (next = current._rope_segment_next) {
+                                hasher.update(current._value_or_segment_value);
                                 hasher.update("\x00");
                             }
                         },
@@ -5587,7 +5605,7 @@ pub const Expr = struct {
                 .e_undefined,
                 .e_inlined_enum,
                 => true,
-                .e_string => |str| str.value != .ascii_only_rope,
+                .e_string => |str| str.tag != .ascii_only_rope,
                 .e_array => |array| array.was_originally_macro,
                 .e_object => |object| object.was_originally_macro,
                 else => false,
