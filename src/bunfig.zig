@@ -270,9 +270,9 @@ pub const Bunfig = struct {
                         try this.expect(expr, .e_object);
                         if (expr.get("junit")) |junit_expr| {
                             try this.expectString(junit_expr);
-                            if (junit_expr.data.e_string.len() > 0) {
+                            if (!junit_expr.data.e_string.isEmpty()) {
                                 this.ctx.test_options.file_reporter = .junit;
-                                this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.string(allocator);
+                                this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.toWtf8MayAlloc(allocator);
                             }
                         }
                     }
