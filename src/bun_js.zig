@@ -339,23 +339,19 @@ pub const Run = struct {
                 Output.prettyErrorln("Error occurred loading entry point: {s}", .{@errorName(err)});
                 Output.flush();
             }
+            // TODO: Do a event loop tick when we figure out how to watch the file that wasn't found
+            //   under hot reload mode
+            vm.exit_handler.exit_code = 1;
+            vm.onExit();
+            if (run.any_unhandled) {
+                bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
 
-            if (vm.hot_reload != .none) {
-                vm.eventLoop().tick();
-                vm.eventLoop().tickPossiblyForever();
-            } else {
-                vm.exit_handler.exit_code = 1;
-                vm.onExit();
-                if (run.any_unhandled) {
-                    bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
-
-                    Output.prettyErrorln(
-                        "<r>\n<d>{s}<r>",
-                        .{Global.unhandled_error_bun_version_string},
-                    );
-                }
-                vm.globalExit();
+                Output.prettyErrorln(
+                    "<r>\n<d>{s}<r>",
+                    .{Global.unhandled_error_bun_version_string},
+                );
             }
+            vm.globalExit();
         }
 
         // don't run the GC if we don't actually need to
@@ -415,7 +411,7 @@ pub const Run = struct {
                         if (result.asAnyPromise()) |promise| {
                             switch (promise.status(vm.jsc)) {
                                 .pending => {
-                                    result._then(vm.global, .undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
+                                    result._then2(vm.global, .undefined, Bun__onResolveEntryPointResult, Bun__onRejectEntryPointResult);
 
                                     vm.tick();
                                     vm.eventLoop().autoTickActive();
@@ -467,7 +463,7 @@ pub const Run = struct {
 };
 
 pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) noreturn {
-    const arguments = callframe.arguments(1).slice();
+    const arguments = callframe.arguments_old(1).slice();
     const result = arguments[0];
     result.print(global, .Log, .Log);
     Global.exit(global.bunVM().exit_handler.exit_code);
@@ -475,7 +471,7 @@ pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callfr
 }
 
 pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) noreturn {
-    const arguments = callframe.arguments(1).slice();
+    const arguments = callframe.arguments_old(1).slice();
     const result = arguments[0];
     result.print(global, .Log, .Log);
     Global.exit(global.bunVM().exit_handler.exit_code);

@@ -41,13 +41,6 @@ pub const ResourceUsage = struct {
     pub usingnamespace JSC.Codegen.JSResourceUsage;
     rusage: Rusage,
 
-    pub fn constructor(
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) ?*Subprocess {
-        return null;
-    }
-
     pub fn getCPUTime(
         this: *ResourceUsage,
         globalObject: *JSGlobalObject,
@@ -237,7 +230,7 @@ pub const Subprocess = struct {
         this: *Subprocess,
         globalObject: *JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         return this.createResourceUsageObject(globalObject);
     }
 
@@ -393,11 +386,8 @@ pub const Subprocess = struct {
         this.updateHasPendingActivity();
     }
 
-    pub fn constructor(
-        _: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) ?*Subprocess {
-        return null;
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Subprocess {
+        return globalObject.throw2("Cannot construct Subprocess", .{});
     }
 
     const Readable = union(enum) {
@@ -592,7 +582,7 @@ pub const Subprocess = struct {
         this: *Subprocess,
         global: *JSGlobalObject,
         _: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         if (this.process.hasExited()) {
             // rely on GC to clean everything up in this case
             return .undefined;
@@ -620,10 +610,10 @@ pub const Subprocess = struct {
         this: *Subprocess,
         globalThis: *JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         this.this_jsvalue = callframe.this();
 
-        var arguments = callframe.arguments(1);
+        var arguments = callframe.arguments_old(1);
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
         const sig: i32 = brk: {
@@ -654,7 +644,7 @@ pub const Subprocess = struct {
                 if (arguments.ptr[0].asString().length() == 0) {
                     break :brk SignalCode.default;
                 }
-                const signal_code = arguments.ptr[0].toEnum(globalThis, "signal", SignalCode) catch return .zero;
+                const signal_code = try arguments.ptr[0].toEnum(globalThis, "signal", SignalCode);
                 break :brk @intFromEnum(signal_code);
             } else if (!arguments.ptr[0].isEmptyOrUndefinedOrNull()) {
                 globalThis.throwInvalidArguments("Invalid signal: must be a string or an integer", .{});
@@ -700,12 +690,12 @@ pub const Subprocess = struct {
         this.process.close();
     }
 
-    pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.jsRef();
         return .undefined;
     }
 
-    pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.jsUnref();
         return .undefined;
     }
@@ -724,7 +714,7 @@ pub const Subprocess = struct {
         }
     }
 
-    pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
+    pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
         IPClog("Subprocess#doSend", .{});
         const ipc_data = &(this.ipc_data orelse {
             if (this.hasExited()) {
@@ -751,7 +741,7 @@ pub const Subprocess = struct {
         const ipc_data = this.ipc() orelse return;
         ipc_data.close(nextTick);
     }
-    pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         _ = globalThis;
         _ = callframe;
         this.disconnectIPC(true);
@@ -1674,11 +1664,11 @@ pub const Subprocess = struct {
         return JSC.JSValue.jsNull();
     }
 
-    pub fn spawn(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) JSValue {
+    pub fn spawn(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) bun.JSError!JSValue {
         return spawnMaybeSync(globalThis, args, secondaryArgsValue, false);
     }
 
-    pub fn spawnSync(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) JSValue {
+    pub fn spawnSync(globalThis: *JSC.JSGlobalObject, args: JSValue, secondaryArgsValue: ?JSValue) bun.JSError!JSValue {
         return spawnMaybeSync(globalThis, args, secondaryArgsValue, true);
     }
 
@@ -1687,7 +1677,7 @@ pub const Subprocess = struct {
         args_: JSValue,
         secondaryArgsValue: ?JSValue,
         comptime is_sync: bool,
-    ) JSValue {
+    ) bun.JSError!JSValue {
         var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var allocator = arena.allocator();
@@ -1745,7 +1735,7 @@ pub const Subprocess = struct {
             } else if (!args.isObject()) {
                 globalThis.throwInvalidArguments("cmd must be an array", .{});
                 return .zero;
-            } else if (args.getTruthy(globalThis, "cmd")) |cmd_value_| {
+            } else if (try args.getTruthy(globalThis, "cmd")) |cmd_value_| {
                 cmd_value = cmd_value_;
             } else {
                 globalThis.throwInvalidArguments("cmd must be an array", .{});
@@ -1753,7 +1743,7 @@ pub const Subprocess = struct {
             }
 
             if (args.isObject()) {
-                if (args.getTruthy(globalThis, "argv0")) |argv0_| {
+                if (try args.getTruthy(globalThis, "argv0")) |argv0_| {
                     const argv0_str = argv0_.getZigString(globalThis);
                     if (argv0_str.len > 0) {
                         argv0 = argv0_str.toOwnedSliceZ(allocator) catch {
@@ -1764,7 +1754,7 @@ pub const Subprocess = struct {
                 }
 
                 // need to update `cwd` before searching for executable with `Which.which`
-                if (args.getTruthy(globalThis, "cwd")) |cwd_| {
+                if (try args.getTruthy(globalThis, "cwd")) |cwd_| {
                     const cwd_str = cwd_.getZigString(globalThis);
                     if (cwd_str.len > 0) {
                         cwd = cwd_str.toOwnedSliceZ(allocator) catch {
@@ -1796,7 +1786,7 @@ pub const Subprocess = struct {
 
                 {
                     var first_cmd = cmds_array.next().?;
-                    var arg0 = first_cmd.toSliceOrNullWithAllocator(globalThis, allocator) orelse return .zero;
+                    var arg0 = try first_cmd.toSliceOrNullWithAllocator(globalThis, allocator);
                     defer arg0.deinit();
 
                     if (argv0 == null) {
@@ -1849,10 +1839,10 @@ pub const Subprocess = struct {
             if (args != .zero and args.isObject()) {
                 // This must run before the stdio parsing happens
                 if (!is_sync) {
-                    if (args.getTruthy(globalThis, "ipc")) |val| {
+                    if (try args.getTruthy(globalThis, "ipc")) |val| {
                         if (val.isCell() and val.isCallable(globalThis.vm())) {
                             maybe_ipc_mode = ipc_mode: {
-                                if (args.getTruthy(globalThis, "serialization")) |mode_val| {
+                                if (try args.getTruthy(globalThis, "serialization")) |mode_val| {
                                     if (mode_val.isString()) {
                                         break :ipc_mode IPC.Mode.fromJS(globalThis, mode_val) orelse {
                                             if (!globalThis.hasException()) {
@@ -1875,7 +1865,7 @@ pub const Subprocess = struct {
                     }
                 }
 
-                if (args.getTruthy(globalThis, "signal")) |signal_val| {
+                if (try args.getTruthy(globalThis, "signal")) |signal_val| {
                     if (signal_val.as(JSC.WebCore.AbortSignal)) |signal| {
                         abort_signal = signal.ref();
                     } else {
@@ -1883,7 +1873,7 @@ pub const Subprocess = struct {
                     }
                 }
 
-                if (args.getTruthy(globalThis, "onDisconnect")) |onDisconnect_| {
+                if (try args.getTruthy(globalThis, "onDisconnect")) |onDisconnect_| {
                     if (!onDisconnect_.isCell() or !onDisconnect_.isCallable(globalThis.vm())) {
                         globalThis.throwInvalidArguments("onDisconnect must be a function or undefined", .{});
                         return .zero;
@@ -1895,7 +1885,7 @@ pub const Subprocess = struct {
                         onDisconnect_.withAsyncContextIfNeeded(globalThis);
                 }
 
-                if (args.getTruthy(globalThis, "onExit")) |onExit_| {
+                if (try args.getTruthy(globalThis, "onExit")) |onExit_| {
                     if (!onExit_.isCell() or !onExit_.isCallable(globalThis.vm())) {
                         globalThis.throwInvalidArguments("onExit must be a function or undefined", .{});
                         return .zero;
@@ -1907,7 +1897,7 @@ pub const Subprocess = struct {
                         onExit_.withAsyncContextIfNeeded(globalThis);
                 }
 
-                if (args.getTruthy(globalThis, "env")) |object| {
+                if (try args.getTruthy(globalThis, "env")) |object| {
                     if (!object.isObject()) {
                         globalThis.throwInvalidArguments("env must be an object", .{});
                         return .zero;
@@ -1923,7 +1913,7 @@ pub const Subprocess = struct {
                     };
                     env_array = envp_managed.moveToUnmanaged();
                 }
-                if (args.get(globalThis, "stdio")) |stdio_val| {
+                if (try args.get(globalThis, "stdio")) |stdio_val| {
                     if (!stdio_val.isEmptyOrUndefinedOrNull()) {
                         if (stdio_val.jsType().isArray()) {
                             var stdio_iter = stdio_val.arrayIterator(globalThis);
@@ -1962,44 +1952,44 @@ pub const Subprocess = struct {
                         }
                     }
                 } else {
-                    if (args.get(globalThis, "stdin")) |value| {
+                    if (try args.get(globalThis, "stdin")) |value| {
                         if (!stdio[0].extract(globalThis, 0, value))
                             return .zero;
                     }
 
-                    if (args.get(globalThis, "stderr")) |value| {
+                    if (try args.get(globalThis, "stderr")) |value| {
                         if (!stdio[2].extract(globalThis, 2, value))
                             return .zero;
                     }
 
-                    if (args.get(globalThis, "stdout")) |value| {
+                    if (try args.get(globalThis, "stdout")) |value| {
                         if (!stdio[1].extract(globalThis, 1, value))
                             return .zero;
                     }
                 }
 
                 if (comptime !is_sync) {
-                    if (args.get(globalThis, "lazy")) |lazy_val| {
+                    if (try args.get(globalThis, "lazy")) |lazy_val| {
                         if (lazy_val.isBoolean()) {
                             lazy = lazy_val.toBoolean();
                         }
                     }
                 }
 
-                if (args.get(globalThis, "detached")) |detached_val| {
+                if (try args.get(globalThis, "detached")) |detached_val| {
                     if (detached_val.isBoolean()) {
                         detached = detached_val.toBoolean();
                     }
                 }
 
                 if (Environment.isWindows) {
-                    if (args.get(globalThis, "windowsHide")) |val| {
+                    if (try args.get(globalThis, "windowsHide")) |val| {
                         if (val.isBoolean()) {
                             windows_hide = val.asBoolean();
                         }
                     }
 
-                    if (args.get(globalThis, "windowsVerbatimArguments")) |val| {
+                    if (try args.get(globalThis, "windowsVerbatimArguments")) |val| {
                         if (val.isBoolean()) {
                             windows_verbatim_arguments = val.asBoolean();
                         }
@@ -2009,8 +1999,7 @@ pub const Subprocess = struct {
         }
 
         if (!override_env and env_array.items.len == 0) {
-            env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch |err|
-                return globalThis.handleError(err, "in Bun.spawn");
+            env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch |err| return globalThis.throwError(err, "in Bun.spawn") catch return .zero;
             env_array.capacity = env_array.items.len;
         }
 
@@ -2044,7 +2033,7 @@ pub const Subprocess = struct {
             // And then one fd is assigned specifically and only for IPC. If the user dont specify it, we add one (default: 3).
             //
             // When Bun.spawn() is given an `.ipc` callback, it enables IPC as follows:
-            env_array.ensureUnusedCapacity(allocator, 3) catch |err| return globalThis.handleError(err, "in Bun.spawn");
+            env_array.ensureUnusedCapacity(allocator, 3) catch |err| return globalThis.throwError(err, "in Bun.spawn") catch return .zero;
             const ipc_fd: u32 = brk: {
                 if (ipc_channel == -1) {
                     // If the user didn't specify an IPC channel, we need to add one
@@ -2129,9 +2118,7 @@ pub const Subprocess = struct {
             @ptrCast(env_array.items.ptr),
         ) catch |err| {
             spawn_options.deinit();
-            globalThis.throwError(err, ": failed to spawn process");
-
-            return .zero;
+            return globalThis.throwError(err, ": failed to spawn process") catch return .zero;
         }) {
             .err => |err| {
                 spawn_options.deinit();
@@ -2423,7 +2410,7 @@ pub const Subprocess = struct {
             },
             .internal => |data| {
                 IPC.log("Received IPC internal message from child", .{});
-                node_cluster_binding.handleInternalMessagePrimary(this.globalThis, this, data);
+                node_cluster_binding.handleInternalMessagePrimary(this.globalThis, this, data) catch {};
             },
         }
     }

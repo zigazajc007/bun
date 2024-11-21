@@ -429,12 +429,16 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
 
 extern fn Bun__Process__queueNextTick1(*JSC.ZigGlobalObject, JSC.JSValue, JSC.JSValue) void;
 
-pub export fn Bun__Process__send(
+comptime {
+    const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
+    @export(Bun__Process__send, .{ .name = "Bun__Process__send" });
+}
+pub fn Bun__Process__send_(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
-) callconv(JSC.conv) JSValue {
+) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
-    var message, var handle, var options_, var callback = callFrame.arguments(4).ptr;
+    var message, var handle, var options_, var callback = callFrame.arguments_old(4).ptr;
 
     if (message == .zero) message = .undefined;
     if (handle == .zero) handle = .undefined;
@@ -453,8 +457,8 @@ pub export fn Bun__Process__send(
     }
 
     const S = struct {
-        fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-            const arguments_ = callframe.arguments(1).slice();
+        fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+            const arguments_ = callframe.arguments_old(1).slice();
             const ex = arguments_[0];
             VirtualMachine.Process__emitErrorEvent(globalThis, ex);
             return .undefined;
@@ -1854,7 +1858,7 @@ pub const VirtualMachine = struct {
             },
         }
 
-        if (debugger != .unspecified) {
+        if (this.debugger != null) {
             this.bundler.options.minify_identifiers = false;
             this.bundler.options.minify_syntax = false;
             this.bundler.options.minify_whitespace = false;
@@ -1957,7 +1961,7 @@ pub const VirtualMachine = struct {
         return vm;
     }
 
-    pub fn initKit(opts: Options) anyerror!*VirtualMachine {
+    pub fn initBake(opts: Options) anyerror!*VirtualMachine {
         JSC.markBinding(@src());
         const allocator = opts.allocator;
         var log: *logger.Log = undefined;
@@ -2389,7 +2393,8 @@ pub const VirtualMachine = struct {
         query_string: ?*ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, false) catch {};
+        // TODO: handle js exception
     }
 
     pub fn resolveFilePathForAPI(
@@ -2400,7 +2405,8 @@ pub const VirtualMachine = struct {
         query_string: ?*ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true) catch {};
+        // TODO: handle js exception
     }
 
     pub fn resolve(
@@ -2411,7 +2417,8 @@ pub const VirtualMachine = struct {
         query_string: ?*ZigString,
         is_esm: bool,
     ) void {
-        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true);
+        resolveMaybeNeedsTrailingSlash(res, global, specifier, source, query_string, is_esm, true) catch {};
+        // TODO: handle js exception
     }
 
     fn normalizeSource(source: []const u8) []const u8 {
@@ -2422,15 +2429,7 @@ pub const VirtualMachine = struct {
         return source;
     }
 
-    fn resolveMaybeNeedsTrailingSlash(
-        res: *ErrorableString,
-        global: *JSGlobalObject,
-        specifier: bun.String,
-        source: bun.String,
-        query_string: ?*ZigString,
-        is_esm: bool,
-        comptime is_a_file_path: bool,
-    ) void {
+    fn resolveMaybeNeedsTrailingSlash(res: *ErrorableString, global: *JSGlobalObject, specifier: bun.String, source: bun.String, query_string: ?*ZigString, is_esm: bool, comptime is_a_file_path: bool) bun.JSError!void {
         if (is_a_file_path and specifier.length() > comptime @as(u32, @intFromFloat(@trunc(@as(f64, @floatFromInt(bun.MAX_PATH_BYTES)) * 1.5)))) {
             const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
             defer specifier_utf8.deinit();
@@ -2468,7 +2467,7 @@ pub const VirtualMachine = struct {
                 else
                     specifier_utf8.slice()[namespace.len + 1 .. specifier_utf8.len];
 
-                if (plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.fromUTF8(after_namespace), source, .bun)) |resolved_path| {
+                if (try plugin_runner.onResolveJSC(bun.String.init(namespace), bun.String.fromUTF8(after_namespace), source, .bun)) |resolved_path| {
                     res.* = resolved_path;
                     return;
                 }
@@ -3682,7 +3681,7 @@ pub const VirtualMachine = struct {
 
         if (error_instance != .zero and error_instance.isCell() and error_instance.jsType().canGet()) {
             inline for (extra_fields) |field| {
-                if (error_instance.getTruthyComptime(this.global, field)) |value| {
+                if (try error_instance.getTruthyComptime(this.global, field)) |value| {
                     const kind = value.jsType();
                     if (kind.isStringLike()) {
                         if (value.toStringOrNull(this.global)) |str| {
@@ -3988,7 +3987,7 @@ pub const VirtualMachine = struct {
                     IPC.log("Received IPC internal message from parent", .{});
                     event_loop.enter();
                     defer event_loop.exit();
-                    node_cluster_binding.handleInternalMessageChild(globalThis, data);
+                    node_cluster_binding.handleInternalMessageChild(globalThis, data) catch return;
                 },
             }
         }
@@ -4367,9 +4366,6 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 // const path = Fs.PathName.init(file_path);
                 const current_hash = hashes[event.index];
 
-                // if (this.verbose)
-                //     std.debug.print("onFileUpdate {s} ({s}, {})\n", .{ file_path, @tagName(kind), event.op });
-
                 switch (kind) {
                     .file => {
                         if (event.op.delete or event.op.rename) {
@@ -4546,16 +4542,14 @@ comptime {
     @export(string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
 }
 
-pub export fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
-    const args = callframe.arguments(1).slice();
+pub fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const args = callframe.arguments_old(1).slice();
     if (args.len < 1) {
-        globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);
-        return JSValue.zero;
+        return globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);
     }
 
     if (!args[0].isNumber()) {
-        globalObject.throwInvalidArguments("setSyntheticAllocationLimitForTesting expects a number", .{});
-        return JSValue.zero;
+        return globalObject.throwInvalidArguments2("setSyntheticAllocationLimitForTesting expects a number", .{});
     }
 
     const limit: usize = @intCast(@max(args[0].coerceToInt64(globalObject), 1024 * 1024));

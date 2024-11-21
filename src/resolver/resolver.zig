@@ -573,7 +573,7 @@ pub const Resolver = struct {
 
                 .{},
                 this.env_loader.?,
-            ) catch @panic("Failed to initialize package manager");
+            );
             pm.onWake = this.onWakePackageManager;
             this.package_manager = pm;
             break :brk pm;
@@ -1774,7 +1774,7 @@ pub const Resolver = struct {
             load_module_from_cache: {
                 // If the source directory doesn't have a node_modules directory, we can
                 // check the global cache directory for a package.json file.
-                var manager = r.getPackageManager();
+                const manager = r.getPackageManager();
                 var dependency_version = Dependency.Version{};
                 var dependency_behavior = Dependency.Behavior.normal;
                 var string_buf = esm.version;
@@ -1852,6 +1852,7 @@ pub const Resolver = struct {
                                 esm.version,
                                 &sliced_string,
                                 r.log,
+                                manager,
                             ) orelse break :load_module_from_cache;
                         }
 
@@ -2176,6 +2177,7 @@ pub const Resolver = struct {
             if (package_json_) |package_json| {
                 package = Package.fromPackageJSON(
                     pm.lockfile,
+                    pm,
                     package_json,
                     Install.Features{
                         .dev_dependencies = true,
@@ -2483,25 +2485,15 @@ pub const Resolver = struct {
         return PackageJSON.new(pkg);
     }
 
-    fn dirInfoCached(
-        r: *ThisResolver,
-        path: string,
-    ) !?*DirInfo {
+    fn dirInfoCached(r: *ThisResolver, path: string) !?*DirInfo {
         return try r.dirInfoCachedMaybeLog(path, true, true);
     }
 
-    /// The path must have a trailing slash and a sentinel 0
-    pub fn readDirInfo(
-        r: *ThisResolver,
-        path: string,
-    ) !?*DirInfo {
+    pub fn readDirInfo(r: *ThisResolver, path: string) !?*DirInfo {
         return try r.dirInfoCachedMaybeLog(path, false, true);
     }
 
-    pub fn readDirInfoIgnoreError(
-        r: *ThisResolver,
-        path: string,
-    ) ?*const DirInfo {
+    pub fn readDirInfoIgnoreError(r: *ThisResolver, path: string) ?*const DirInfo {
         return r.dirInfoCachedMaybeLog(path, false, true) catch null;
     }
 
@@ -3280,11 +3272,15 @@ pub const Resolver = struct {
         };
     }
 
-    pub export fn Resolver__nodeModulePathsForJS(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    comptime {
+        const Resolver__nodeModulePathsForJS = JSC.toJSHostFunction(Resolver__nodeModulePathsForJS_);
+        @export(Resolver__nodeModulePathsForJS, .{ .name = "Resolver__nodeModulePathsForJS" });
+    }
+    pub fn Resolver__nodeModulePathsForJS_(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) bun.JSError!JSC.JSValue {
         bun.JSC.markBinding(@src());
         const argument: bun.JSC.JSValue = callframe.argument(0);
 
-        if (argument.isEmpty() or !argument.isString()) {
+        if (argument == .zero or !argument.isString()) {
             globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
             return .zero;
         }
@@ -4204,7 +4200,6 @@ pub const GlobalCache = enum {
 
 comptime {
     if (!bun.JSC.is_bindgen) {
-        _ = Resolver.Resolver__nodeModulePathsForJS;
         _ = Resolver.Resolver__propForRequireMainPaths;
     }
 }

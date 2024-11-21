@@ -20,6 +20,7 @@ const X509 = @import("./x509.zig");
 const Async = bun.Async;
 const uv = bun.windows.libuv;
 const H2FrameParser = @import("./h2_frame_parser.zig").H2FrameParser;
+const NodePath = @import("../../node/path.zig");
 noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []const u8) JSValue {
     var zig_str: ZigString = ZigString.init("");
     var output_buf: [4096]u8 = undefined;
@@ -217,15 +218,14 @@ const Handlers = struct {
         return true;
     }
 
-    pub fn fromJS(globalObject: *JSC.JSGlobalObject, opts: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Handlers {
+    pub fn fromJS(globalObject: *JSC.JSGlobalObject, opts: JSC.JSValue) bun.JSError!Handlers {
         var handlers = Handlers{
             .vm = globalObject.bunVM(),
             .globalObject = globalObject,
         };
 
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
-            exception.* = JSC.toInvalidArguments("Expected \"socket\" to be an object", .{}, globalObject).asObjectRef();
-            return null;
+            return globalObject.throwInvalidArguments2("Expected \"socket\" to be an object", .{});
         }
 
         const pairs = .{
@@ -240,10 +240,9 @@ const Handlers = struct {
             .{ "onHandshake", "handshake" },
         };
         inline for (pairs) |pair| {
-            if (opts.getTruthyComptime(globalObject, pair.@"1")) |callback_value| {
+            if (try opts.getTruthyComptime(globalObject, pair.@"1")) |callback_value| {
                 if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
-                    exception.* = JSC.toInvalidArguments(comptime std.fmt.comptimePrint("Expected \"{s}\" callback to be a function", .{pair.@"1"}), .{}, globalObject).asObjectRef();
-                    return null;
+                    return globalObject.throwInvalidArguments2("Expected \"{s}\" callback to be a function", .{pair[1]});
                 }
 
                 @field(handlers, pair.@"0") = callback_value;
@@ -251,19 +250,16 @@ const Handlers = struct {
         }
 
         if (handlers.onData == .zero and handlers.onWritable == .zero) {
-            exception.* = JSC.toInvalidArguments("Expected at least \"data\" or \"drain\" callback", .{}, globalObject).asObjectRef();
-            return null;
+            return globalObject.throwInvalidArguments2("Expected at least \"data\" or \"drain\" callback", .{});
         }
 
-        if (opts.getTruthy(globalObject, "binaryType")) |binary_type_value| {
+        if (try opts.getTruthy(globalObject, "binaryType")) |binary_type_value| {
             if (!binary_type_value.isString()) {
-                exception.* = JSC.toInvalidArguments("Expected \"binaryType\" to be a string", .{}, globalObject).asObjectRef();
-                return null;
+                return globalObject.throwInvalidArguments2("Expected \"binaryType\" to be a string", .{});
             }
 
-            handlers.binary_type = BinaryType.fromJSValue(globalObject, binary_type_value) orelse {
-                exception.* = JSC.toInvalidArguments("Expected 'binaryType' to be 'arraybuffer', 'uint8array', 'buffer'", .{}, globalObject).asObjectRef();
-                return null;
+            handlers.binary_type = try BinaryType.fromJSValue(globalObject, binary_type_value) orelse {
+                return globalObject.throwInvalidArguments2("Expected 'binaryType' to be 'ArrayBuffer', 'Uint8Array', or 'Buffer'", .{});
             };
         }
 
@@ -315,12 +311,7 @@ pub const SocketConfig = struct {
     exclusive: bool = false,
     allowHalfOpen: bool = false,
 
-    pub fn fromJS(
-        vm: *JSC.VirtualMachine,
-        opts: JSC.JSValue,
-        globalObject: *JSC.JSGlobalObject,
-        exception: JSC.C.ExceptionRef,
-    ) ?SocketConfig {
+    pub fn fromJS(vm: *JSC.VirtualMachine, opts: JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!SocketConfig {
         var hostname_or_unix: JSC.ZigString.Slice = JSC.ZigString.Slice.empty;
         var port: ?u16 = null;
         var exclusive = false;
@@ -329,31 +320,28 @@ pub const SocketConfig = struct {
         var ssl: ?JSC.API.ServerConfig.SSLConfig = null;
         var default_data = JSValue.zero;
 
-        if (opts.getTruthy(globalObject, "tls")) |tls| {
+        if (try opts.getTruthy(globalObject, "tls")) |tls| {
             if (tls.isBoolean()) {
                 if (tls.toBoolean()) {
                     ssl = JSC.API.ServerConfig.SSLConfig.zero;
                 }
             } else {
-                if (JSC.API.ServerConfig.SSLConfig.inJS(vm, globalObject, tls, exception)) |ssl_config| {
+                if (try JSC.API.ServerConfig.SSLConfig.fromJS(vm, globalObject, tls)) |ssl_config| {
                     ssl = ssl_config;
-                } else if (exception.* != null) {
-                    return null;
                 }
             }
         }
 
         hostname_or_unix: {
-            if (opts.getTruthy(globalObject, "fd")) |fd_| {
+            if (try opts.getTruthy(globalObject, "fd")) |fd_| {
                 if (fd_.isNumber()) {
                     break :hostname_or_unix;
                 }
             }
 
-            if (opts.getTruthy(globalObject, "unix")) |unix_socket| {
+            if (try opts.getTruthy(globalObject, "unix")) |unix_socket| {
                 if (!unix_socket.isString()) {
-                    exception.* = JSC.toInvalidArguments("Expected \"unix\" to be a string", .{}, globalObject).asObjectRef();
-                    return null;
+                    return globalObject.throwInvalidArguments2("Expected \"unix\" to be a string", .{});
                 }
 
                 hostname_or_unix = unix_socket.getZigString(globalObject).toSlice(bun.default_allocator);
@@ -368,20 +356,19 @@ pub const SocketConfig = struct {
                 }
             }
 
-            if (opts.getTruthy(globalObject, "exclusive")) |_| {
+            if (try opts.getTruthy(globalObject, "exclusive")) |_| {
                 exclusive = true;
             }
-            if (opts.getTruthy(globalObject, "allowHalfOpen")) |_| {
+            if (try opts.getTruthy(globalObject, "allowHalfOpen")) |_| {
                 allowHalfOpen = true;
             }
 
-            if (opts.getTruthy(globalObject, "hostname") orelse opts.getTruthy(globalObject, "host")) |hostname| {
+            if (try opts.getTruthy(globalObject, "hostname") orelse try opts.getTruthy(globalObject, "host")) |hostname| {
                 if (!hostname.isString()) {
-                    exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a string", .{}, globalObject).asObjectRef();
-                    return null;
+                    return globalObject.throwInvalidArguments2("Expected \"hostname\" to be a string", .{});
                 }
 
-                var port_value = opts.get(globalObject, "port") orelse JSValue.zero;
+                var port_value = try opts.get(globalObject, "port") orelse JSValue.zero;
                 hostname_or_unix = hostname.getZigString(globalObject).toSlice(bun.default_allocator);
 
                 if (port_value.isEmptyOrUndefinedOrNull() and hostname_or_unix.len > 0) {
@@ -394,25 +381,22 @@ pub const SocketConfig = struct {
                 }
 
                 if (port_value.isEmptyOrUndefinedOrNull()) {
-                    exception.* = JSC.toInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{}, globalObject).asObjectRef();
-                    return null;
+                    return globalObject.throwInvalidArguments2("Expected \"port\" to be a number between 0 and 65535", .{});
                 }
 
                 const porti32 = port_value.coerceToInt32(globalObject);
                 if (globalObject.hasException()) {
-                    return null;
+                    return error.JSError;
                 }
 
                 if (porti32 < 0 or porti32 > 65535) {
-                    exception.* = JSC.toInvalidArguments("Expected \"port\" to be a number between 0 and 65535", .{}, globalObject).asObjectRef();
-                    return null;
+                    return globalObject.throwInvalidArguments2("Expected \"port\" to be a number between 0 and 65535", .{});
                 }
 
                 port = @intCast(porti32);
 
                 if (hostname_or_unix.len == 0) {
-                    exception.* = JSC.toInvalidArguments("Expected \"hostname\" to be a non-empty string", .{}, globalObject).asObjectRef();
-                    return null;
+                    return globalObject.throwInvalidArguments2("Expected \"hostname\" to be a non-empty string", .{});
                 }
 
                 if (hostname_or_unix.len > 0) {
@@ -421,18 +405,14 @@ pub const SocketConfig = struct {
             }
 
             if (hostname_or_unix.len == 0) {
-                exception.* = JSC.toInvalidArguments("Expected \"unix\" or \"hostname\" to be a non-empty string", .{}, globalObject).asObjectRef();
-                return null;
+                return globalObject.throwInvalidArguments2("Expected \"unix\" or \"hostname\" to be a non-empty string", .{});
             }
 
-            exception.* = JSC.toInvalidArguments("Expected either \"hostname\" or \"unix\"", .{}, globalObject).asObjectRef();
-            return null;
+            return globalObject.throwInvalidArguments2("Expected either \"hostname\" or \"unix\"", .{});
         }
+        errdefer hostname_or_unix.deinit();
 
-        var handlers = Handlers.fromJS(globalObject, opts.get(globalObject, "socket") orelse JSValue.zero, exception) orelse {
-            hostname_or_unix.deinit();
-            return null;
-        };
+        var handlers = try Handlers.fromJS(globalObject, try opts.get(globalObject, "socket") orelse JSValue.zero);
 
         if (opts.fastGet(globalObject, .data)) |default_data_value| {
             default_data = default_data_value;
@@ -452,6 +432,38 @@ pub const SocketConfig = struct {
     }
 };
 
+fn isValidPipeName(pipe_name: []const u8) bool {
+    if (!Environment.isWindows) {
+        return false;
+    }
+    // check for valid pipe names
+    // at minimum we need to have \\.\pipe\ or \\?\pipe\ + 1 char that is not a separator
+    return pipe_name.len > 9 and
+        NodePath.isSepWindowsT(u8, pipe_name[0]) and
+        NodePath.isSepWindowsT(u8, pipe_name[1]) and
+        (pipe_name[2] == '.' or pipe_name[2] == '?') and
+        NodePath.isSepWindowsT(u8, pipe_name[3]) and
+        strings.eql(pipe_name[4..8], "pipe") and
+        NodePath.isSepWindowsT(u8, pipe_name[8]) and
+        !NodePath.isSepWindowsT(u8, pipe_name[9]);
+}
+
+fn normalizePipeName(pipe_name: []const u8, buffer: []u8) ?[]const u8 {
+    if (Environment.isWindows) {
+        bun.assert(pipe_name.len < buffer.len);
+        if (!isValidPipeName(pipe_name)) {
+            return null;
+        }
+        // normalize pipe name with can have mixed slashes
+        // pipes are simple and this will be faster than using node:path.resolve()
+        // we dont wanna to normalize the pipe name it self only the pipe identifier (//./pipe/, //?/pipe/, etc)
+        @memcpy(buffer[0..9], "\\\\.\\pipe\\");
+        @memcpy(buffer[9..pipe_name.len], pipe_name[9..]);
+        return buffer[0..pipe_name.len];
+    } else {
+        return null;
+    }
+}
 pub const Listener = struct {
     pub const log = Output.scoped(.Listener, false);
 
@@ -533,8 +545,8 @@ pub const Listener = struct {
         }
     };
 
-    pub fn reload(this: *Listener, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
-        const args = callframe.arguments(1);
+    pub fn reload(this: *Listener, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const args = callframe.arguments_old(1);
 
         if (args.len < 1 or (this.listener == .none and this.handlers.active_connections == 0)) {
             globalObject.throw("Expected 1 argument", .{});
@@ -547,17 +559,12 @@ pub const Listener = struct {
             return .zero;
         }
 
-        var exception: JSC.C.JSValueRef = null;
-
-        const socket_obj = opts.get(globalObject, "socket") orelse {
+        const socket_obj = try opts.get(globalObject, "socket") orelse {
             globalObject.throw("Expected \"socket\" object", .{});
             return .zero;
         };
 
-        const handlers = Handlers.fromJS(globalObject, socket_obj, &exception) orelse {
-            globalObject.throwValue(exception.?.value());
-            return .zero;
-        };
+        const handlers = try Handlers.fromJS(globalObject, socket_obj);
 
         var prev_handlers = &this.handlers;
         prev_handlers.unprotect();
@@ -567,25 +574,16 @@ pub const Listener = struct {
         return JSValue.jsUndefined();
     }
 
-    pub fn listen(globalObject: *JSC.JSGlobalObject, opts: JSValue) JSValue {
+    pub fn listen(globalObject: *JSC.JSGlobalObject, opts: JSValue) bun.JSError!JSValue {
         log("listen", .{});
-        var exception_ = [1]JSC.JSValueRef{null};
-        const exception: JSC.C.ExceptionRef = &exception_;
-        defer {
-            if (exception_[0] != null) {
-                globalObject.throwValue(exception_[0].?.value());
-            }
-        }
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
-            exception.* = JSC.toInvalidArguments("Expected object", .{}, globalObject).asObjectRef();
+            globalObject.throwInvalidArguments("Expected object", .{});
             return .zero;
         }
 
         const vm = JSC.VirtualMachine.get();
 
-        var socket_config = SocketConfig.fromJS(vm, opts, globalObject, exception) orelse {
-            return .zero;
-        };
+        var socket_config = try SocketConfig.fromJS(vm, opts, globalObject);
 
         var hostname_or_unix = socket_config.hostname_or_unix;
         const port = socket_config.port;
@@ -606,8 +604,9 @@ pub const Listener = struct {
         if (Environment.isWindows) {
             if (port == null) {
                 // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
-                const pipe_name = hostname_or_unix.slice();
-                if (strings.startsWith(pipe_name, "\\\\.\\pipe\\") or strings.startsWith(pipe_name, "\\\\?\\pipe\\")) {
+                const slice = hostname_or_unix.slice();
+                var buf: bun.PathBuffer = undefined;
+                if (normalizePipeName(slice, buf[0..])) |pipe_name| {
                     const connection: Listener.UnixOrHost = .{ .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice() };
                     if (ssl_enabled) {
                         if (ssl.?.protos) |p| {
@@ -638,7 +637,7 @@ pub const Listener = struct {
                     this.listener = .{
                         // we need to add support for the backlog parameter on listen here we use the default value of nodejs
                         .namedPipe = WindowsNamedPipeListeningContext.listen(globalObject, pipe_name, 511, ssl, this) catch {
-                            exception.* = JSC.toInvalidArguments("Failed to listen at {s}", .{pipe_name}, globalObject).asObjectRef();
+                            globalObject.throwInvalidArguments("Failed to listen at {s}", .{pipe_name});
                             this.deinit();
                             return .zero;
                         },
@@ -681,7 +680,7 @@ pub const Listener = struct {
                 }
             }
 
-            exception.* = err.asObjectRef();
+            globalObject.throwValue(err);
             return .zero;
         };
 
@@ -757,10 +756,7 @@ pub const Listener = struct {
                     defer bun.default_allocator.free(host);
                     break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8, &errno);
                 },
-                .fd => {
-                    // don't call listen() on an fd
-                    return .zero;
-                },
+                .fd => unreachable,
             }
         } orelse {
             defer {
@@ -781,8 +777,7 @@ pub const Listener = struct {
                     err.put(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toJS(globalObject));
                 }
             }
-            exception.* = err.asObjectRef();
-
+            globalObject.throwValue(err);
             return .zero;
         };
 
@@ -832,9 +827,8 @@ pub const Listener = struct {
         onCreate(false, socket);
     }
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*Listener {
-        globalObject.throw("Cannot construct Listener", .{});
-        return null;
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Listener {
+        return globalObject.throw2("Cannot construct Listener", .{});
     }
 
     pub fn onNamePipeCreated(comptime ssl: bool, listener: *Listener) *NewSocket(ssl) {
@@ -886,7 +880,7 @@ pub const Listener = struct {
         socket.setTimeout(120);
     }
 
-    pub fn addServerName(this: *Listener, global: *JSC.JSGlobalObject, hostname: JSValue, tls: JSValue) JSValue {
+    pub fn addServerName(this: *Listener, global: *JSC.JSGlobalObject, hostname: JSValue, tls: JSValue) bun.JSError!JSValue {
         if (!this.ssl) {
             global.throwInvalidArguments("addServerName requires SSL support", .{});
             return .zero;
@@ -906,29 +900,23 @@ pub const Listener = struct {
             global.throwInvalidArguments("hostname pattern cannot be empty", .{});
             return .zero;
         }
-        var exception_ref = [_]JSC.C.JSValueRef{null};
-        const exception: JSC.C.ExceptionRef = &exception_ref;
 
-        if (JSC.API.ServerConfig.SSLConfig.inJS(JSC.VirtualMachine.get(), global, tls, exception)) |ssl_config| {
+        if (try JSC.API.ServerConfig.SSLConfig.fromJS(JSC.VirtualMachine.get(), global, tls)) |ssl_config| {
             // to keep nodejs compatibility, we allow to replace the server name
             uws.us_socket_context_remove_server_name(1, this.socket_context, server_name);
             uws.us_bun_socket_context_add_server_name(1, this.socket_context, server_name, ssl_config.asUSockets(), null);
         }
 
-        if (exception.* != null) {
-            global.throwValue(exception_ref[0].?.value());
-            return .zero;
-        }
         return JSValue.jsUndefined();
     }
 
-    pub fn dispose(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn dispose(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.doStop(true);
         return .undefined;
     }
 
-    pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
-        const arguments = callframe.arguments(1);
+    pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        const arguments = callframe.arguments_old(1);
         log("close", .{});
 
         this.doStop(if (arguments.len > 0 and arguments.ptr[0].isBoolean()) arguments.ptr[0].toBoolean() else false);
@@ -1034,7 +1022,7 @@ pub const Listener = struct {
         return JSValue.jsNumber(this.connection.host.port);
     }
 
-    pub fn ref(this: *Listener, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+    pub fn ref(this: *Listener, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
         if (this.listener == .none) return JSValue.jsUndefined();
         this.poll_ref.ref(globalObject.bunVM());
@@ -1042,7 +1030,7 @@ pub const Listener = struct {
         return JSValue.jsUndefined();
     }
 
-    pub fn unref(this: *Listener, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+    pub fn unref(this: *Listener, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.poll_ref.unref(globalObject.bunVM());
         if (this.handlers.active_connections == 0) {
             this.strong_self.clear();
@@ -1050,26 +1038,14 @@ pub const Listener = struct {
         return JSValue.jsUndefined();
     }
 
-    pub fn connect(
-        globalObject: *JSC.JSGlobalObject,
-        opts: JSValue,
-    ) JSValue {
-        var exception_ = [1]JSC.JSValueRef{null};
-        const exception: JSC.C.ExceptionRef = &exception_;
-        defer {
-            if (exception_[0] != null) {
-                globalObject.throwValue(exception_[0].?.value());
-            }
-        }
+    pub fn connect(globalObject: *JSC.JSGlobalObject, opts: JSValue) bun.JSError!JSValue {
         if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
-            exception.* = JSC.toInvalidArguments("Expected options object", .{}, globalObject).asObjectRef();
+            globalObject.throwInvalidArguments("Expected options object", .{});
             return .zero;
         }
         const vm = globalObject.bunVM();
 
-        const socket_config = SocketConfig.fromJS(vm, opts, globalObject, exception) orelse {
-            return .zero;
-        };
+        const socket_config = try SocketConfig.fromJS(vm, opts, globalObject);
 
         var hostname_or_unix = socket_config.hostname_or_unix;
         const port = socket_config.port;
@@ -1085,7 +1061,7 @@ pub const Listener = struct {
         vm.eventLoop().ensureWaker();
 
         var connection: Listener.UnixOrHost = blk: {
-            if (opts.getTruthy(globalObject, "fd")) |fd_| {
+            if (try opts.getTruthy(globalObject, "fd")) |fd_| {
                 if (fd_.isNumber()) {
                     const fd = fd_.asFileDescriptor();
                     break :blk .{ .fd = fd };
@@ -1099,9 +1075,14 @@ pub const Listener = struct {
         };
 
         if (Environment.isWindows) {
+            var buf: bun.PathBuffer = undefined;
+            var pipe_name: ?[]const u8 = null;
             const isNamedPipe = switch (connection) {
                 // we check if the path is a named pipe otherwise we try to connect using AF_UNIX
-                .unix => |pipe_name| strings.startsWith(pipe_name, "\\\\.\\pipe\\") or strings.startsWith(pipe_name, "\\\\?\\pipe\\"),
+                .unix => |slice| brk: {
+                    pipe_name = normalizePipeName(slice, buf[0..]);
+                    break :brk (pipe_name != null);
+                },
                 .fd => |fd| brk: {
                     const uvfd = bun.uvfdcast(fd);
                     const fd_type = uv.uv_guess_handle(uvfd);
@@ -1146,7 +1127,7 @@ pub const Listener = struct {
                     tls.poll_ref.ref(handlers.vm);
                     tls.ref();
                     if (connection == .unix) {
-                        const named_pipe = WindowsNamedPipeContext.connect(globalObject, connection.unix, ssl, .{ .tls = tls }) catch {
+                        const named_pipe = WindowsNamedPipeContext.connect(globalObject, pipe_name.?, ssl, .{ .tls = tls }) catch {
                             return promise_value;
                         };
                         tls.socket = TLSSocket.Socket.fromNamedPipe(named_pipe);
@@ -1172,7 +1153,7 @@ pub const Listener = struct {
                     tcp.poll_ref.ref(handlers.vm);
 
                     if (connection == .unix) {
-                        const named_pipe = WindowsNamedPipeContext.connect(globalObject, connection.unix, null, .{ .tcp = tcp }) catch {
+                        const named_pipe = WindowsNamedPipeContext.connect(globalObject, pipe_name.?, null, .{ .tcp = tcp }) catch {
                             return promise_value;
                         };
                         tcp.socket = TCPSocket.Socket.fromNamedPipe(named_pipe);
@@ -1200,7 +1181,7 @@ pub const Listener = struct {
                 .syscall = bun.String.static("connect"),
                 .code = if (port == null) bun.String.static("ENOENT") else bun.String.static("ECONNREFUSED"),
             };
-            exception.* = err.toErrorInstance(globalObject).asObjectRef();
+            globalObject.throwValue(err.toErrorInstance(globalObject));
             handlers.unprotect();
             connection.deinit();
             return .zero;
@@ -1454,11 +1435,11 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*This {
-            globalObject.throw("Cannot construct Socket", .{});
-            return null;
+        pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*This {
+            return globalObject.throw2("Cannot construct Socket", .{});
         }
-        pub fn resumeFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+
+        pub fn resumeFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
 
             log("resume", .{});
@@ -1467,7 +1448,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
             return .undefined;
         }
-        pub fn pauseFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        pub fn pauseFromJS(this: *This, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
 
             log("pause", .{});
@@ -1477,9 +1458,9 @@ fn NewSocket(comptime ssl: bool) type {
             return .undefined;
         }
 
-        pub fn setKeepAlive(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+        pub fn setKeepAlive(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
-            const args = callframe.arguments(2);
+            const args = callframe.arguments_old(2);
 
             const enabled: bool = brk: {
                 if (args.len >= 1) {
@@ -1505,10 +1486,10 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsBoolean(this.socket.setKeepAlive(enabled, initialDelay));
         }
 
-        pub fn setNoDelay(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+        pub fn setNoDelay(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
 
-            const args = callframe.arguments(1);
+            const args = callframe.arguments_old(1);
             const enabled: bool = brk: {
                 if (args.len >= 1) {
                     break :brk args.ptr[0].coerce(bool, globalThis);
@@ -1885,21 +1866,11 @@ fn NewSocket(comptime ssl: bool) type {
                 }
             } else {
                 // call handhsake callback with authorized and authorization error if has one
-                var authorization_error: JSValue = undefined;
-                if (ssl_error.error_no == 0) {
-                    authorization_error = JSValue.jsNull();
-                } else {
-                    const code = if (ssl_error.code == null) "" else ssl_error.code[0..bun.len(ssl_error.code)];
+                const authorization_error: JSValue = if (ssl_error.error_no == 0)
+                    JSValue.jsNull()
+                else
+                    ssl_error.toJS(globalObject);
 
-                    const reason = if (ssl_error.reason == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason)];
-
-                    const fallback = JSC.SystemError{
-                        .code = bun.String.createUTF8(code),
-                        .message = bun.String.createUTF8(reason),
-                    };
-
-                    authorization_error = fallback.toErrorInstance(globalObject);
-                }
                 result = callback.call(globalObject, this_value, &[_]JSValue{
                     this_value,
                     JSValue.jsBoolean(authorized),
@@ -2050,9 +2021,9 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             JSC.markBinding(@src());
-            const args = callframe.arguments(1);
+            const args = callframe.arguments_old(1);
             if (this.socket.isDetached()) return JSValue.jsUndefined();
             if (args.len == 0) {
                 globalObject.throw("Expected 1 argument, got 0", .{});
@@ -2074,7 +2045,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             JSC.markBinding(@src());
 
             if (this.socket.isDetached()) {
@@ -2104,7 +2075,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             JSC.markBinding(@src());
 
             if (this.socket.isDetached()) {
@@ -2181,7 +2152,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
                 this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
                 return JSValue.jsBoolean(false);
@@ -2199,7 +2170,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (this.socket.isDetached()) {
                 this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
                 return JSValue.jsBoolean(false);
@@ -2231,7 +2202,9 @@ fn NewSocket(comptime ssl: bool) type {
             const buffer: JSC.Node.StringOrBuffer = if (data_value.isUndefined())
                 JSC.Node.StringOrBuffer.empty
             else
-                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false) orelse {
+                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false) catch {
+                    return .fail;
+                } orelse {
                     if (!globalObject.hasException()) {
                         _ = globalObject.throwInvalidArgumentTypeValue("data", "string, buffer, or blob", data_value);
                     }
@@ -2332,7 +2305,7 @@ fn NewSocket(comptime ssl: bool) type {
             const length_value = args[2];
 
             if (encoding_value != .undefined and (offset_value != .undefined or length_value != .undefined)) {
-                globalObject.throwTODO("Support encoding with offset and length altogether. Only either encoding or offset, length is supported, but not both combinations yet.");
+                globalObject.throwTODO("Support encoding with offset and length altogether. Only either encoding or offset, length is supported, but not both combinations yet.") catch {};
                 return .fail;
             }
 
@@ -2340,7 +2313,9 @@ fn NewSocket(comptime ssl: bool) type {
             const buffer: JSC.Node.BlobOrStringOrBuffer = if (args[0].isUndefined())
                 JSC.Node.BlobOrStringOrBuffer{ .string_or_buffer = JSC.Node.StringOrBuffer.empty }
             else
-                JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(globalObject, stack_fallback.get(), args[0], encoding_value, false, true) orelse {
+                JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValueMaybeAsyncAllowRequestResponse(globalObject, stack_fallback.get(), args[0], encoding_value, false, true) catch {
+                    return .fail;
+                } orelse {
                     if (!globalObject.hasException()) {
                         _ = globalObject.throwInvalidArgumentTypeValue("data", "string, buffer, or blob", args[0]);
                     }
@@ -2472,7 +2447,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             _: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             JSC.markBinding(@src());
             this.internalFlush();
             return JSValue.jsUndefined();
@@ -2482,7 +2457,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             _: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             JSC.markBinding(@src());
             this.closeAndDetach(.failure);
             return JSValue.jsUndefined();
@@ -2492,9 +2467,9 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             _: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             JSC.markBinding(@src());
-            const args = callframe.arguments(1);
+            const args = callframe.arguments_old(1);
             this.buffered_data_for_node_net.deinitWithAllocator(bun.default_allocator);
             if (args.len > 0 and args.ptr[0].toBoolean()) {
                 this.socket.shutdownRead();
@@ -2509,7 +2484,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             JSC.markBinding(@src());
 
             var args = callframe.argumentsUndef(5);
@@ -2533,14 +2508,14 @@ fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        pub fn jsRef(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        pub fn jsRef(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
             if (this.socket.isDetached()) return JSValue.jsUndefined();
             this.poll_ref.ref(globalObject.bunVM());
             return JSValue.jsUndefined();
         }
 
-        pub fn jsUnref(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        pub fn jsUnref(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
             this.poll_ref.unref(globalObject.bunVM());
             return JSValue.jsUndefined();
@@ -2587,8 +2562,8 @@ fn NewSocket(comptime ssl: bool) type {
             this.deref();
         }
 
-        pub fn reload(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
-            const args = callframe.arguments(1);
+        pub fn reload(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+            const args = callframe.arguments_old(1);
 
             if (args.len < 1) {
                 globalObject.throw("Expected 1 argument", .{});
@@ -2605,17 +2580,12 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            var exception: JSC.C.JSValueRef = null;
-
-            const socket_obj = opts.get(globalObject, "socket") orelse {
+            const socket_obj = try opts.get(globalObject, "socket") orelse {
                 globalObject.throw("Expected \"socket\" option", .{});
                 return .zero;
             };
 
-            const handlers = Handlers.fromJS(globalObject, socket_obj, &exception) orelse {
-                globalObject.throwValue(exception.?.value());
-                return .zero;
-            };
+            const handlers = try Handlers.fromJS(globalObject, socket_obj);
 
             var prev_handlers = this.handlers;
             prev_handlers.unprotect();
@@ -2629,7 +2599,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             _: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2642,7 +2612,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2650,7 +2620,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            const args = callframe.arguments(2);
+            const args = callframe.arguments_old(2);
 
             if (args.len < 2) {
                 globalObject.throw("Expected requestCert and rejectUnauthorized arguments", .{});
@@ -2683,7 +2653,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2700,7 +2670,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2723,7 +2693,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2732,7 +2702,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            const args = callframe.arguments(1);
+            const args = callframe.arguments_old(1);
 
             if (args.len < 1) {
                 globalObject.throw("Expected session to be a string, Buffer or TypedArray", .{});
@@ -2743,8 +2713,6 @@ fn NewSocket(comptime ssl: bool) type {
             var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
             defer arena.deinit();
 
-            var exception_ref = [_]JSC.C.JSValueRef{null};
-            const exception: JSC.C.ExceptionRef = &exception_ref;
             if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), session_arg)) |sb| {
                 defer sb.deinit();
                 const session_slice = sb.slice();
@@ -2756,9 +2724,6 @@ fn NewSocket(comptime ssl: bool) type {
                     return .zero;
                 }
                 return JSValue.jsUndefined();
-            } else if (exception.* != null) {
-                globalObject.throwValue(JSC.JSValue.c(exception.*));
-                return .zero;
             } else {
                 globalObject.throw("Expected session to be a string, Buffer or TypedArray", .{});
                 return .zero;
@@ -2769,7 +2734,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2827,7 +2792,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2836,7 +2801,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            const args = callframe.arguments(3);
+            const args = callframe.arguments_old(3);
             if (args.len < 2) {
                 globalObject.throw("Expected length and label to be provided", .{});
                 return .zero;
@@ -2859,10 +2824,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            var label = label_arg.toSliceOrNull(globalObject) orelse {
-                globalObject.throw("Expected label to be a string", .{});
-                return .zero;
-            };
+            var label = try label_arg.toSliceOrNull(globalObject);
 
             defer label.deinit();
             const label_slice = label.slice();
@@ -2874,8 +2836,6 @@ fn NewSocket(comptime ssl: bool) type {
                 var arena: bun.ArenaAllocator = bun.ArenaAllocator.init(bun.default_allocator);
                 defer arena.deinit();
 
-                var exception_ref = [_]JSC.C.JSValueRef{null};
-                const exception: JSC.C.ExceptionRef = &exception_ref;
                 if (JSC.Node.StringOrBuffer.fromJS(globalObject, arena.allocator(), context_arg)) |sb| {
                     defer sb.deinit();
                     const context_slice = sb.slice();
@@ -2890,9 +2850,6 @@ fn NewSocket(comptime ssl: bool) type {
                         return .zero;
                     }
                     return buffer;
-                } else if (exception.* != null) {
-                    globalObject.throwValue(JSC.JSValue.c(exception.*));
-                    return .zero;
                 } else {
                     globalObject.throw("Expected context to be a string, Buffer or TypedArray", .{});
                     return .zero;
@@ -2915,7 +2872,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsNull();
             }
@@ -2981,7 +2938,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -3025,7 +2982,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -3053,7 +3010,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -3081,7 +3038,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             JSC.markBinding(@src());
             if (comptime ssl == false) {
                 return JSValue.jsNull();
@@ -3169,7 +3126,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             JSC.markBinding(@src());
             if (comptime ssl == false) {
                 return JSValue.jsNull();
@@ -3188,13 +3145,13 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             JSC.markBinding(@src());
             if (comptime ssl == false) {
                 return JSValue.jsBoolean(false);
             }
 
-            const args = callframe.arguments(1);
+            const args = callframe.arguments_old(1);
 
             if (args.len < 1) {
                 globalObject.throw("Expected size to be a number", .{});
@@ -3223,13 +3180,13 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             JSC.markBinding(@src());
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
 
-            const args = callframe.arguments(1);
+            const args = callframe.arguments_old(1);
             var abbreviated: bool = true;
             if (args.len > 0) {
                 const arg = args.ptr[0];
@@ -3274,7 +3231,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -3291,7 +3248,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -3307,7 +3264,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -3317,7 +3274,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            const args = callframe.arguments(1);
+            const args = callframe.arguments_old(1);
             if (args.len < 1) {
                 globalObject.throw("Expected 1 argument", .{});
                 return .zero;
@@ -3361,7 +3318,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) JSValue {
+        ) bun.JSError!JSValue {
             JSC.markBinding(@src());
             const this_js = callframe.this();
 
@@ -3371,14 +3328,13 @@ fn NewSocket(comptime ssl: bool) type {
             if (this.socket.isDetached() or this.socket.isNamedPipe()) {
                 return JSValue.jsUndefined();
             }
-            const args = callframe.arguments(1);
+            const args = callframe.arguments_old(1);
 
             if (args.len < 1) {
                 globalObject.throw("Expected 1 arguments", .{});
                 return .zero;
             }
 
-            var exception: JSC.C.JSValueRef = null;
             var success = false;
 
             const opts = args.ptr[0];
@@ -3387,7 +3343,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            const socket_obj = opts.get(globalObject, "socket") orelse {
+            const socket_obj = try opts.get(globalObject, "socket") orelse {
                 globalObject.throw("Expected \"socket\" option", .{});
                 return .zero;
             };
@@ -3395,17 +3351,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            const handlers = Handlers.fromJS(globalObject, socket_obj, &exception) orelse {
-                if (!globalObject.hasException() and exception != null) {
-                    globalObject.throwValue(exception.?.value());
-                }
-
-                return .zero;
-            };
-
-            if (!globalObject.hasException() and exception != null) {
-                globalObject.throwValue(exception.?.value());
-            }
+            const handlers = try Handlers.fromJS(globalObject, socket_obj);
 
             if (globalObject.hasException()) {
                 return .zero;
@@ -3420,21 +3366,15 @@ fn NewSocket(comptime ssl: bool) type {
                 }
             }
 
-            if (opts.getTruthy(globalObject, "tls")) |tls| {
+            if (try opts.getTruthy(globalObject, "tls")) |tls| {
                 if (tls.isBoolean()) {
                     if (tls.toBoolean()) {
                         ssl_opts = JSC.API.ServerConfig.SSLConfig.zero;
                     }
                 } else {
-                    if (JSC.API.ServerConfig.SSLConfig.inJS(JSC.VirtualMachine.get(), globalObject, tls, &exception)) |ssl_config| {
+                    if (try JSC.API.ServerConfig.SSLConfig.fromJS(JSC.VirtualMachine.get(), globalObject, tls)) |ssl_config| {
                         ssl_opts = ssl_config;
                     }
-                }
-            }
-
-            if (exception != null) {
-                if (!globalObject.hasException()) {
-                    globalObject.throwValue(exception.?.value());
                 }
             }
 
@@ -4274,26 +4214,24 @@ pub const WindowsNamedPipeContext = if (Environment.isWindows) struct {
     }
 } else void;
 
-pub fn jsAddServerName(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+pub fn jsAddServerName(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     JSC.markBinding(@src());
 
-    const arguments = callframe.arguments(3);
+    const arguments = callframe.arguments_old(3);
     if (arguments.len < 3) {
-        global.throwNotEnoughArguments("addServerName", 3, arguments.len);
-        return .zero;
+        return global.throwNotEnoughArguments("addServerName", 3, arguments.len);
     }
     const listener = arguments.ptr[0];
     if (listener.as(Listener)) |this| {
         return this.addServerName(global, arguments.ptr[1], arguments.ptr[2]);
     }
-    global.throw("Expected a Listener instance", .{});
-    return .zero;
+    return global.throw2("Expected a Listener instance", .{});
 }
 
-pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     JSC.markBinding(@src());
 
-    const args = callframe.arguments(2);
+    const args = callframe.arguments_old(2);
     if (args.len < 2) {
         globalObject.throw("Expected 2 arguments", .{});
         return .zero;
@@ -4305,35 +4243,28 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
         return .zero;
     }
 
-    var exception: JSC.C.JSValueRef = null;
-
     const opts = args.ptr[1];
     if (opts.isEmptyOrUndefinedOrNull() or opts.isBoolean() or !opts.isObject()) {
         globalObject.throw("Expected options object", .{});
         return .zero;
     }
 
-    const socket_obj = opts.get(globalObject, "socket") orelse {
+    const socket_obj = try opts.get(globalObject, "socket") orelse {
         globalObject.throw("Expected \"socket\" option", .{});
         return .zero;
     };
 
-    var handlers = Handlers.fromJS(globalObject, socket_obj, &exception) orelse {
-        globalObject.throwValue(exception.?.value());
-        return .zero;
-    };
+    var handlers = try Handlers.fromJS(globalObject, socket_obj);
 
     var ssl_opts: ?JSC.API.ServerConfig.SSLConfig = null;
-    if (opts.getTruthy(globalObject, "tls")) |tls| {
+    if (try opts.getTruthy(globalObject, "tls")) |tls| {
         if (tls.isBoolean()) {
             if (tls.toBoolean()) {
                 ssl_opts = JSC.API.ServerConfig.SSLConfig.zero;
             }
         } else {
-            if (JSC.API.ServerConfig.SSLConfig.inJS(JSC.VirtualMachine.get(), globalObject, tls, &exception)) |ssl_config| {
+            if (try JSC.API.ServerConfig.SSLConfig.fromJS(JSC.VirtualMachine.get(), globalObject, tls)) |ssl_config| {
                 ssl_opts = ssl_config;
-            } else if (exception != null) {
-                return .zero;
             }
         }
     }
@@ -4408,13 +4339,12 @@ pub fn jsUpgradeDuplexToTLS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.C
     return array;
 }
 
-pub fn jsIsNamedPipeSocket(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+pub fn jsIsNamedPipeSocket(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
     JSC.markBinding(@src());
 
-    const arguments = callframe.arguments(3);
+    const arguments = callframe.arguments_old(3);
     if (arguments.len < 1) {
-        global.throwNotEnoughArguments("isNamedPipeSocket", 1, arguments.len);
-        return .zero;
+        return global.throwNotEnoughArguments("isNamedPipeSocket", 1, arguments.len);
     }
     const socket = arguments.ptr[0];
     if (socket.as(TCPSocket)) |this| {
@@ -4426,13 +4356,13 @@ pub fn jsIsNamedPipeSocket(global: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 }
 pub fn createNodeTLSBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSArray.create(global, &.{
-        JSC.JSFunction.create(global, "addServerName", JSC.toJSHostFunction(jsAddServerName), 3, .{}),
-        JSC.JSFunction.create(global, "upgradeDuplexToTLS", JSC.toJSHostFunction(jsUpgradeDuplexToTLS), 2, .{}),
-        JSC.JSFunction.create(global, "isNamedPipeSocket", JSC.toJSHostFunction(jsIsNamedPipeSocket), 1, .{}),
+        JSC.JSFunction.create(global, "addServerName", jsAddServerName, 3, .{}),
+        JSC.JSFunction.create(global, "upgradeDuplexToTLS", jsUpgradeDuplexToTLS, 2, .{}),
+        JSC.JSFunction.create(global, "isNamedPipeSocket", jsIsNamedPipeSocket, 1, .{}),
     });
 }
 
-pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
     JSC.markBinding(@src());
 
     if (Environment.isWindows) {
