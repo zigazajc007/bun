@@ -526,7 +526,7 @@ pub const StreamStart = union(Tag) {
         }
     }
 
-    pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) StreamStart {
+    pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) bun.JSError!StreamStart {
         if (value.isEmptyOrUndefinedOrNull() or !value.isObject()) {
             return .{ .empty = {} };
         }
@@ -543,7 +543,7 @@ pub const StreamStart = union(Tag) {
         globalThis: *JSGlobalObject,
         value: JSValue,
         comptime tag: Tag,
-    ) StreamStart {
+    ) bun.JSError!StreamStart {
         if (value.isEmptyOrUndefinedOrNull() or !value.isObject()) {
             return .{ .empty = {} };
         }
@@ -612,7 +612,7 @@ pub const StreamStart = union(Tag) {
                             },
                         },
                     };
-                } else if (value.getTruthy(globalThis, "fd")) |fd_value| {
+                } else if (try value.getTruthy(globalThis, "fd")) |fd_value| {
                     if (!fd_value.isAnyInt()) {
                         return .{
                             .err = Syscall.Error{
@@ -1756,7 +1756,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 }
             }
 
-            const args_list = callframe.arguments(4);
+            const args_list = callframe.arguments_old(4);
             const args = args_list.ptr[0..args_list.len];
 
             if (args.len == 0) {
@@ -1826,7 +1826,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 }
             }
 
-            const args_list = callframe.arguments(4);
+            const args_list = callframe.arguments_old(4);
             const args = args_list.ptr[0..args_list.len];
             if (args.len == 0 or !args[0].isString()) {
                 const err = JSC.toTypeError(
@@ -1917,11 +1917,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             if (comptime @hasField(StreamStart, name_)) {
                 return this.sink.start(
                     if (callframe.argumentsCount() > 0)
-                        StreamStart.fromJSWithTag(
-                            globalThis,
-                            callframe.argument(0),
-                            comptime @field(StreamStart, name_),
-                        )
+                        try StreamStart.fromJSWithTag(globalThis, callframe.argument(0), comptime @field(StreamStart, name_))
                     else
                         StreamStart{ .empty = {} },
                 ).toJS(globalThis);
@@ -1929,7 +1925,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             return this.sink.start(
                 if (callframe.argumentsCount() > 0)
-                    StreamStart.fromJS(globalThis, callframe.argument(0))
+                    try StreamStart.fromJS(globalThis, callframe.argument(0))
                 else
                     StreamStart{ .empty = {} },
             ).toJS(globalThis);
@@ -2834,7 +2830,7 @@ pub fn ReadableStreamSource(
             pub fn pull(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
                 JSC.markBinding(@src());
                 const this_jsvalue = callFrame.this();
-                const arguments = callFrame.arguments(2);
+                const arguments = callFrame.arguments_old(2);
                 const view = arguments.ptr[0];
                 view.ensureStillAlive();
                 this.this_jsvalue = this_jsvalue;

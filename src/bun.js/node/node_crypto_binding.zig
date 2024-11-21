@@ -13,7 +13,7 @@ const PBKDF2 = EVP.PBKDF2;
 const JSValue = JSC.JSValue;
 const validators = @import("./util/validators.zig");
 fn randomInt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(2).slice();
+    const arguments = callframe.arguments_old(2).slice();
 
     //min, max
     if (!arguments[0].isNumber()) return globalThis.throwInvalidArgumentTypeValue("min", "safe integer", arguments[0]);
@@ -42,12 +42,9 @@ fn pbkdf2(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(5);
+    const arguments = callframe.arguments_old(5);
 
-    const data = PBKDF2.fromJS(globalThis, arguments.slice(), true) orelse {
-        assert(globalThis.hasException());
-        return .zero;
-    };
+    const data = try PBKDF2.fromJS(globalThis, arguments.slice(), true);
 
     const job = PBKDF2.Job.create(JSC.VirtualMachine.get(), globalThis, &data);
     return job.promise.value();
@@ -57,12 +54,9 @@ fn pbkdf2Sync(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
 ) bun.JSError!JSC.JSValue {
-    const arguments = callframe.arguments(5);
+    const arguments = callframe.arguments_old(5);
 
-    var data = PBKDF2.fromJS(globalThis, arguments.slice(), false) orelse {
-        assert(globalThis.hasException());
-        return .zero;
-    };
+    var data = try PBKDF2.fromJS(globalThis, arguments.slice(), false);
     defer data.deinit();
     var out_arraybuffer = JSC.JSValue.createBufferFromLength(globalThis, @intCast(data.length));
     if (out_arraybuffer == .zero or globalThis.hasException()) {

@@ -714,14 +714,15 @@ pub const String = extern struct {
         }
     }
 
-    pub fn fromJSRef(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) String {
+    pub fn fromJSRef(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
         JSC.markBinding(@src());
 
         var out: String = String.dead;
         if (BunString__fromJSRef(globalObject, value, &out)) {
             return out;
         } else {
-            return String.dead;
+            bun.assert(globalObject.hasException());
+            return error.JSError;
         }
     }
 
@@ -1327,7 +1328,7 @@ pub const String = extern struct {
     }
 
     pub fn jsGetStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const args = callFrame.arguments(1).slice();
+        const args = callFrame.arguments_old(1).slice();
 
         if (args.len == 0 or !args.ptr[0].isString()) {
             return JSC.jsNumber(@as(i32, 0));
