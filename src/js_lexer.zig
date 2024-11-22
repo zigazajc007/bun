@@ -661,23 +661,19 @@ fn NewLexer_(
         pub const InnerStringLiteral = packed struct { suffix_len: u3, needs_decode: bool };
 
         fn parseStringCharacters(lexer: *LexerType, comptime quote: u8) ![]const u8 {
-            switch (quote) {
-                '"' => {},
-                '\'' => {},
-                '`' => @compileError("TODO"),
-                else => @compileError("not allowed"),
-            }
+            // https://tc39.es/ecma262/#prod-StringLiteral
+            // https://tc39.es/ecma262/#prod-TemplateLiteral
+
+            const interesting_characters: []const u8 = comptime switch (quote) {
+                '"' => &.{ quote, '\\', '\r', '\n' }, // LS/PS are allowed in regular strings
+                '\'' => &.{ quote, '\\', '\r', '\n' },
+                '`' => &.{ quote, '\\', '\r', '\n', '\xE2', '$' }, // \xE2 is the first byte of LS/PS which create a newline in a template string
+                0 => &.{ '\\', '\r', '\n' },
+                else => @compileError("bad quote char: [" ++ &[_]u8{quote} ++ "]"),
+            };
 
             bun.assert(lexer.temp_buffer_u8.items.len == 0);
             defer lexer.temp_buffer_u8.clearRetainingCapacity();
-
-            // https://tc39.es/ecma262/#prod-StringLiteral
-            // string character is:
-            // - any codepoint excluding " and \\ and \r and \n
-            // - '\' EscapeSequence
-            // - '\' LineTerminatorSequence
-            // LineTerminatorSequence is:
-            // - LF | CR LF | CR | LS | PS
 
             var uncommitted_segment: ?[]const u8 = null;
 
@@ -687,8 +683,9 @@ fn NewLexer_(
                 lexer.current = lexer.end;
                 const remainder = lexer.source.contents[lexer.current..];
                 // LS and PS are allowed
-                const interesting_character_idx = indexOfAnyVector(remainder, &.{ quote, '\\', '\r', '\n' }) orelse {
+                const interesting_character_idx = indexOfAnyVector(remainder, interesting_characters) orelse {
                     // no interesting character between now and end of file; that means the ending quote is missing
+                    if (quote == 0) break;
                     return lexer.addDefaultError("Unterminated string literal");
                 };
                 uncommitted_segment = remainder[0..interesting_character_idx];
@@ -700,24 +697,61 @@ fn NewLexer_(
                 }
                 lexer.consumeN(interesting_character_idx);
 
-                switch (lexer.code_point) {
-                    '"' => {
-                        lexer.step();
+                if (lexer.code_point == quote) {
+                    lexer.step();
+                    break;
+                }
+                // commit segment
+                try lexer.temp_buffer_u8.appendSlice(uncommitted_segment.?);
+                uncommitted_segment = null;
+                // handle char
+                const codepoint_to_handle = lexer.code_point;
+                lexer.step();
+                switch (codepoint_to_handle) {
+                    quote => {
                         break;
                     },
                     '\\' => {
-                        // commit segment
-                        try lexer.temp_buffer_u8.appendSlice(uncommitted_segment.?);
-                        uncommitted_segment = null;
-                        // consume '\\''
-                        lexer.step();
                         // handle escape sequence
                         try lexer.handleEscapeSequence();
                     },
-                    '\r', '\n' => {
-                        return lexer.addDefaultError("Unterminated string literal");
+                    '\r', '\n' => |c| {
+                        if (quote != '`' and quote != 0) return lexer.addDefaultError("Unterminated string literal");
+                        // handle newline
+                        if (c == '\r' and lexer.code_point == '\n') lexer.step();
+                        if (quote == 0) {
+                            // Implicitly-quoted strings end when they reach a newline OR end of file
+                            // This only applies to .env
+                            break;
+                        }
+                        try lexer.temp_buffer_u8.append('\n');
                     },
-                    else => unreachable, // not interesting character
+                    '$' => {
+                        if (quote != '`') unreachable; // not interesting character
+                        // handle dollars
+                        if (lexer.code_point == '{') {
+                            lexer.step();
+                            lexer.token = switch (lexer.rescan_close_brace_as_template_token) {
+                                true => .t_template_middle,
+                                false => .t_template_head,
+                            };
+                            break;
+                        } else {
+                            try lexer.temp_buffer_u8.append('$');
+                        }
+                    },
+                    0x2028, 0x2029 => {
+                        if (quote != '`') unreachable; // not interesting character
+                        // handle newline
+                        try lexer.temp_buffer_u8.append('\n');
+                    },
+                    else => {
+                        if (quote != '`') unreachable; // not interesting character
+                        // print codepoint to wtf-8 (interesting character searches for \xE2 and many codepoints start with that. it could even be an invalid
+                        // codepoint and we could be printing a replacement character.)
+                        try lexer.temp_buffer_u8.ensureUnusedCapacity(4);
+                        lexer.temp_buffer_u8.items.len += strings.encodeWTF8Rune(lexer.temp_buffer_u8.unusedCapacitySlice()[0..4], codepoint_to_handle);
+                    },
                 }
             }
 
@@ -805,6 +839,7 @@ fn NewLexer_(
                 '8', '9' => |byte| byte,
                 // - HexEscapeSequence
                 'x' => blk: {
+                    lexer.current = lexer.end;
                     const remainder = lexer.source.contents[lexer.current..];
                     if (remainder.len < 2) return lexer.addDefaultError("malformed hexidecimal character escape sequence");
                     lexer.consumeN(2);
@@ -830,6 +865,7 @@ fn NewLexer_(
                             break :blk2 remainder[0..close_bracket];
                         },
                         else => blk2: {
+                            lexer.current = lexer.end;
                             const remainder = lexer.source.contents[lexer.current..];
                             if (remainder.len < 4) return lexer.addDefaultError("malformed Unicode character escape sequence");
                             lexer.consumeN(4);
@@ -880,127 +916,6 @@ fn NewLexer_(
             lexer.temp_buffer_u8.items.len += strings.encodeWTF8Rune(lexer.temp_buffer_u8.unusedCapacitySlice()[0..4], codepoint_to_append);
         }
 
-        fn parseStringLiteralInner(lexer: *LexerType, comptime quote: CodePoint) !InnerStringLiteral {
-            var suffix_len: u3 = if (comptime quote == 0) 0 else 1;
-            var needs_decode = false;
-            stringLiteral: while (true) {
-                switch (lexer.code_point) {
-                    '\\' => {
-                        needs_decode = true;
-                        lexer.step();
-
-                        // Handle Windows CRLF
-                        if (lexer.code_point == '\r' and comptime !is_json) {
-                            lexer.step();
-                            if (lexer.code_point == '\n') {
-                                lexer.step();
-                            }
-                            continue :stringLiteral;
-                        }
-
-                        if (comptime is_json and json_options.ignore_trailing_escape_sequences) {
-                            if (lexer.code_point == quote and lexer.current >= lexer.source.contents.len) {
-                                lexer.step();
-
-                                break;
-                            }
-                        }
-
-                        switch (lexer.code_point) {
-                            // 0 cannot be in this list because it may be a legacy octal literal
-                            '`', '\'', '"', '\\' => {
-                                lexer.step();
-
-                                continue :stringLiteral;
-                            },
-                            else => {},
-                        }
-                    },
-                    // This indicates the end of the file
-
-                    -1 => {
-                        if (comptime quote != 0) {
-                            return lexer.addDefaultError("Unterminated string literal");
-                        }
-
-                        break :stringLiteral;
-                    },
-
-                    '\r' => {
-                        if (comptime quote != '`') {
-                            return lexer.addDefaultError("Unterminated string literal");
-                        }
-
-                        // Template literals require newline normalization
-                        needs_decode = true;
-                    },
-
-                    '\n' => {
-
-                        // Implicitly-quoted strings end when they reach a newline OR end of file
-                        // This only applies to .env
-                        switch (comptime quote) {
-                            0 => {
-                                break :stringLiteral;
-                            },
-                            '`' => {},
-                            else => {
-                                return lexer.addDefaultError("Unterminated string literal");
-                            },
-                        }
-                    },
-
-                    '$' => {
-                        if (comptime quote == '`') {
-                            lexer.step();
-                            if (lexer.code_point == '{') {
-                                suffix_len = 2;
-                                lexer.step();
-                                lexer.token = if (lexer.rescan_close_brace_as_template_token)
-                                    T.t_template_middle
-                                else
-                                    T.t_template_head;
-
-                                break :stringLiteral;
-                            }
-                            continue :stringLiteral;
-                        }
-                    },
-                    // exit condition
-                    quote => {
-                        lexer.step();
-
-                        break;
-                    },
-
-                    else => {
-
-                        // Non-ASCII strings need the slow path
-                        if (lexer.code_point >= 0x80) {
-                            needs_decode = true;
-                        } else if (is_json and lexer.code_point < 0x20) {
-                            try lexer.syntaxError();
-                        } else if (comptime (quote == '"' or quote == '\'') and Environment.isNative) {
-                            const remainder = lexer.source.contents[lexer.current..];
-                            if (remainder.len >= 4096) {
-                                lexer.current += indexOfInterestingCharacterInStringLiteral(remainder, quote) orelse {
-                                    lexer.step();
-                                    continue;
-                                };
-                                lexer.end = lexer.current -| 1;
-                                lexer.step();
-                                continue;
-                            }
-                        }
-                    },
-                }
-
-                lexer.step();
-            }
-
-            return InnerStringLiteral{ .needs_decode = needs_decode, .suffix_len = suffix_len };
-        }
-
         pub fn parseStringLiteral(lexer: *LexerType, comptime quote: CodePoint) !void {
             if (comptime quote != '`') {
                 lexer.token = T.t_string_literal;
@@ -1013,30 +928,13 @@ fn NewLexer_(
             // .env values may not always be quoted.
             lexer.step();
 
-            if (quote == '"' or quote == '\'') {
-                const string_literal_contents = try lexer.parseStringCharacters(quote);
+            const string_literal_contents = try lexer.parseStringCharacters(quote);
 
-                lexer.string_literal_raw_content = string_literal_contents;
-                lexer.string_literal_raw_format = .utf8;
-                lexer.string_literal_start = lexer.start;
+            lexer.string_literal_raw_content = string_literal_contents;
+            lexer.string_literal_raw_format = .utf8;
+            lexer.string_literal_start = lexer.start;
 
-                if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and strings.isAllASCII(string_literal_contents);
-            } else {
-                const string_literal_details = try lexer.parseStringLiteralInner(quote);
-
-                // Reset string literal
-                const base = if (comptime quote == 0) lexer.start else lexer.start + 1;
-                lexer.string_literal_raw_content = lexer.source.contents[base..@min(lexer.source.contents.len, lexer.end - @as(usize, string_literal_details.suffix_len))];
-                lexer.string_literal_raw_format = if (string_literal_details.needs_decode) .needs_decode else .ascii;
-                lexer.string_literal_start = lexer.start;
-                if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and !string_literal_details.needs_decode;
-            }
-
-            if (comptime !FeatureFlags.allow_json_single_quotes) {
-                if (quote == '\'' and is_json) {
-                    try lexer.addRangeError(lexer.range(), "JSON strings must use double quotes", .{}, true);
-                }
-            }
+            if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and strings.isAllASCII(string_literal_contents);
         }
 
         inline fn nextCodepointSlice(it: *LexerType) []const u8 {
@@ -3649,7 +3547,8 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
     return null;
 }
 
-fn indexOfAnyVector(text_: []const u8, comptime items: *const [4]u8) ?usize {
+fn indexOfAnyVector(text_: []const u8, comptime items: []const u8) ?usize {
+    if (comptime items.len != 4) return std.mem.indexOfAny(u8, text_, items);
     var text = text_;
     const v0: strings.AsciiVector = @splat(items[0]);
     const v1: strings.AsciiVector = @splat(items[1]);
