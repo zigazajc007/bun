@@ -205,7 +205,7 @@ fn NewLexer_(
             return Error.SyntaxError;
         }
 
-        pub fn addDefaultError(self: *LexerType, msg: []const u8) !void {
+        pub fn addDefaultError(self: *LexerType, msg: []const u8) Error {
             @setCold(true);
 
             self.addError(self.start, "{s}", .{msg}, true);
@@ -660,6 +660,243 @@ fn NewLexer_(
 
         pub const InnerStringLiteral = packed struct { suffix_len: u3, needs_decode: bool };
 
+        fn parseDoubleStringCharacters(lexer: *LexerType) ![]const u8 {
+            bun.assert(lexer.temp_buffer_u8.items.len == 0);
+            defer lexer.temp_buffer_u8.clearRetainingCapacity();
+
+            // https://tc39.es/ecma262/#prod-StringLiteral
+            // string character is:
+            // - any codepoint excluding " and \\ and \r and \n
+            // - '\' EscapeSequence
+            // - '\' LineTerminatorSequence
+            // LineTerminatorSequence is:
+            // - LF | CR LF | CR | LS | PS
+
+            var uncommitted_segment: ?[]const u8 = null;
+
+            while (true) {
+                bun.assert(uncommitted_segment == null);
+
+                const remainder = lexer.source.contents[lexer.current..];
+                // LS and PS are allowed
+                const interesting_character_idx = indexOfAnyVector(remainder, &.{ '"', '\\', '\r', '\n' }) orelse {
+                    // no interesting character between now and end of file; that means the ending quote is missing
+                    return lexer.addDefaultError("Unterminated string literal");
+                };
+                uncommitted_segment = remainder[0..interesting_character_idx];
+                if (!strings.isValidUTF8(uncommitted_segment.?)) {
+                    // uh oh! bad utf-8. TODO: iterate over the bad utf-8 and write one codepoint at a time
+                    // node converts each invalid byte to �
+                    // bun looks like it's supposed to do that but instead doesn't
+                    return lexer.addDefaultError("Invalid utf-8");
+                }
+                lexer.consumeN(interesting_character_idx);
+
+                switch (lexer.code_point) {
+                    '"' => {
+                        lexer.step();
+                        break;
+                    },
+                    '\\' => {
+                        // commit segment
+                        try lexer.temp_buffer_u8.appendSlice(uncommitted_segment.?);
+                        uncommitted_segment = null;
+                        // consume '\\''
+                        lexer.step();
+                        // handle escape sequence
+                        try lexer.handleEscapeSequence();
+                    },
+                    '\r', '\n' => {
+                        return lexer.addDefaultError("Unterminated string literal");
+                    },
+                    else => unreachable, // not interesting character
+                }
+                lexer.step();
+            }
+
+            if (lexer.temp_buffer_u8.items.len == 0) {
+                return uncommitted_segment orelse "";
+            } else {
+                return try lexer.allocator.dupe(u8, lexer.temp_buffer_u8.items);
+            }
+        }
+
+        fn consumeN(lexer: *LexerType, n: usize) void {
+            lexer.current += n;
+            lexer.end = lexer.current -| 1;
+            lexer.step();
+        }
+
+        /// maximum 0xFFFFFF, else returns null
+        fn decodeHex(hex: []const u8) ?i32 {
+            var result: i32 = 0;
+            if (hex.len == 0 or hex.len > 6) return null; // too big
+            for (hex) |byte| switch (byte) {
+                '0'...'9' => {
+                    result = result * 16 | (byte - '0');
+                },
+                'a'...'f' => {
+                    result = result * 16 | (byte + 10 - 'a');
+                },
+                'A'...'F' => {
+                    result = result * 16 | (byte + 10 - 'A');
+                },
+                else => return null,
+            };
+            return result;
+        }
+
+        /// parses an escape sequence excluding '\\' and appends it to lexer.temp_buffer_u8. merges an unpaired surrogate if necessary.
+        fn handleEscapeSequence(lexer: *LexerType) !void {
+            // - '\' EscapeSequence
+            // - '\' LineTerminatorSequence
+
+            switch (lexer.code_point) {
+                -1 => {
+                    // eof
+                    return lexer.addDefaultError("Unterminated string literal");
+                },
+
+                // LineTerminatorSequence
+                '\n', 0x2028, 0x2029 => {
+                    // consume
+                    lexer.step();
+                    // nothing to append
+                },
+                '\r' => {
+                    // consume
+                    lexer.step();
+                    // consume a subsequent '\n' if there is one
+                    if (lexer.code_point == '\n') lexer.step();
+                    // nothing to append
+                },
+
+                // https://tc39.es/ecma262/#prod-EscapeSequence
+                // - 0[^\d]
+                // - LegacyOctalEscapeSequence
+                '0'...'7' => {
+                    const is_three = lexer.code_point < '4';
+                    var result: i32 = 0;
+                    result += lexer.code_point - '0';
+                    lexer.step();
+                    if (lexer.code_point >= '0' and lexer.code_point <= '9') result += lexer.code_point - '0';
+                    if (is_three and lexer.code_point >= '0' and lexer.code_point <= '9') result += lexer.code_point - '0';
+                    // TODO: disallow octal sequences except '\0' in strings except tagged template literals
+                },
+                // - NonOctalDecimalEscapeSequence
+                '8', '9' => |byte| {
+                    lexer.step();
+                    try lexer.temp_buffer_u8.append(byte);
+                },
+                // - HexEscapeSequence
+                'x' => {
+                    const remainder = lexer.source.contents[lexer.current..];
+                    if (remainder.len < 2) return lexer.addDefaultError("malformed hexidecimal character escape sequence");
+                    lexer.consumeN(2);
+                    const slice = remainder[0..2];
+                    const result = decodeHex(slice) orelse return lexer.addDefaultError("malformed hexidecimal character escape sequence");
+                    bun.assert(result >= 0 and result <= 0xFF);
+
+                    // append codepoint
+                    try lexer.temp_buffer_u8.ensureUnusedCapacity(4);
+                    lexer.temp_buffer_u8.items.len += strings.encodeWTF8Rune(lexer.temp_buffer_u8.unusedCapacitySlice()[0..4], result);
+                },
+                // - UnicodeEscapeSequence
+                'u' => {
+                    // TODO: allow bad unicode escapes in tagged template literals
+                    // consume
+                    lexer.step();
+                    const slice: []const u8 = switch (lexer.code_point) {
+                        '{' => blk: {
+                            const remainder = lexer.source.contents[lexer.current..];
+                            const close_bracket = std.mem.indexOfScalar(u8, remainder, '}') orelse {
+                                return lexer.addDefaultError("malformed Unicode character escape sequence");
+                            };
+                            lexer.consumeN(close_bracket);
+                            // consume close bracket
+                            bun.assert(lexer.code_point == '}');
+                            lexer.step();
+                            break :blk remainder[0..close_bracket];
+                        },
+                        else => blk: {
+                            const remainder = lexer.source.contents[lexer.current..];
+                            if (remainder.len < 4) return lexer.addDefaultError("malformed Unicode character escape sequence");
+                            lexer.consumeN(4);
+                            break :blk remainder[0..4];
+                        },
+                    };
+                    // decode slice
+                    var result: i32 = decodeHex(slice) orelse return lexer.addDefaultError("malformed Unicode character escape sequence");
+                    if (result > 0x10FFFF) return lexer.addDefaultError("Unicode codepoint must not be greater than 0x10FFFF in escape sequence");
+
+                    // surrogate pairing
+                    const first_high_surrogate = 0xD800;
+                    const last_high_surrogate = 0xDBFF;
+                    const first_low_surrogate = 0xDC00;
+                    const last_low_surrogate = 0xDFFF;
+
+                    if (result >= first_low_surrogate or result <= last_low_surrogate) blk: {
+                        const low_half = result;
+                        if (lexer.temp_buffer_u8.items.len < 3) break :blk;
+                        const last3 = lexer.temp_buffer_u8.items[lexer.temp_buffer_u8.items.len - 3 ..][0..3];
+                        const seq_len = strings.wtf8ByteSequenceLength(last3[0]);
+                        if (seq_len != 3) break :blk;
+                        const high_half = strings.decodeWTF8RuneT(&.{ seq_len[0], seq_len[1], seq_len[2], 0 }, seq_len, i32, -1);
+                        if (high_half >= first_high_surrogate and high_half <= last_high_surrogate) {
+                            // merge surrogate pair
+                            lexer.temp_buffer_u8.items.len -= 3;
+                            result = 0x10000 + ((high_half & 0x03ff) << 10) | (low_half & 0x03ff);
+                        }
+                    }
+
+                    // append codepoint
+                    try lexer.temp_buffer_u8.ensureUnusedCapacity(4);
+                    lexer.temp_buffer_u8.items.len += strings.encodeWTF8Rune(lexer.temp_buffer_u8.unusedCapacitySlice()[0..4], result);
+                },
+                // - CharacterEscapeSequence
+                //   - SingleEscapeCharacter
+                '\'', '\"', '\\' => |byte| {
+                    lexer.step();
+                    try lexer.temp_buffer_u8.append(byte);
+                },
+                'b' => {
+                    lexer.step();
+                    try lexer.temp_buffer_u8.append(0x08);
+                },
+                'f' => {
+                    lexer.step();
+                    try lexer.temp_buffer_u8.append(0x0c);
+                },
+                'n' => {
+                    lexer.step();
+                    try lexer.temp_buffer_u8.append(0x0a);
+                },
+                'r' => {
+                    lexer.step();
+                    try lexer.temp_buffer_u8.append(0x0d);
+                },
+                't' => {
+                    lexer.step();
+                    try lexer.temp_buffer_u8.append(0x09);
+                },
+                'v' => {
+                    lexer.step();
+                    try lexer.temp_buffer_u8.append(0x0b);
+                },
+                //   - NonEscapeCharacter
+                else => |char| {
+                    // consume
+                    lexer.step();
+                    // append codepoint
+                    try lexer.temp_buffer_u8.ensureUnusedCapacity(4);
+                    lexer.temp_buffer_u8.items.len += strings.encodeWTF8Rune(lexer.temp_buffer_u8.unusedCapacitySlice()[0..4], char);
+                },
+            }
+
+            // LF | CR LF | CR | LS | PS
+            // '\n', '\r', '\u{2028}', '\u{2029}'
+        }
+
         fn parseStringLiteralInner(lexer: *LexerType, comptime quote: CodePoint) !InnerStringLiteral {
             var suffix_len: u3 = if (comptime quote == 0) 0 else 1;
             var needs_decode = false;
@@ -700,7 +937,7 @@ fn NewLexer_(
 
                     -1 => {
                         if (comptime quote != 0) {
-                            try lexer.addDefaultError("Unterminated string literal");
+                            return lexer.addDefaultError("Unterminated string literal");
                         }
 
                         break :stringLiteral;
@@ -708,7 +945,7 @@ fn NewLexer_(
 
                     '\r' => {
                         if (comptime quote != '`') {
-                            try lexer.addDefaultError("Unterminated string literal");
+                            return lexer.addDefaultError("Unterminated string literal");
                         }
 
                         // Template literals require newline normalization
@@ -725,7 +962,7 @@ fn NewLexer_(
                             },
                             '`' => {},
                             else => {
-                                try lexer.addDefaultError("Unterminated string literal");
+                                return lexer.addDefaultError("Unterminated string literal");
                             },
                         }
                     },
@@ -793,14 +1030,24 @@ fn NewLexer_(
             // .env values may not always be quoted.
             lexer.step();
 
-            const string_literal_details = try lexer.parseStringLiteralInner(quote);
+            if (quote == '"') {
+                const string_literal_contents = try lexer.parseDoubleStringCharacters();
 
-            // Reset string literal
-            const base = if (comptime quote == 0) lexer.start else lexer.start + 1;
-            lexer.string_literal_raw_content = lexer.source.contents[base..@min(lexer.source.contents.len, lexer.end - @as(usize, string_literal_details.suffix_len))];
-            lexer.string_literal_raw_format = if (string_literal_details.needs_decode) .needs_decode else .ascii;
-            lexer.string_literal_start = lexer.start;
-            if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and !string_literal_details.needs_decode;
+                lexer.string_literal_raw_content = string_literal_contents;
+                lexer.string_literal_raw_format = .utf8;
+                lexer.string_literal_start = lexer.start;
+
+                if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and strings.isAllASCII(string_literal_contents);
+            } else {
+                const string_literal_details = try lexer.parseStringLiteralInner(quote);
+
+                // Reset string literal
+                const base = if (comptime quote == 0) lexer.start else lexer.start + 1;
+                lexer.string_literal_raw_content = lexer.source.contents[base..@min(lexer.source.contents.len, lexer.end - @as(usize, string_literal_details.suffix_len))];
+                lexer.string_literal_raw_format = if (string_literal_details.needs_decode) .needs_decode else .ascii;
+                lexer.string_literal_start = lexer.start;
+                if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and !string_literal_details.needs_decode;
+            }
 
             if (comptime !FeatureFlags.allow_json_single_quotes) {
                 if (quote == '\'' and is_json) {
@@ -3416,5 +3663,35 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
         text = text[strings.ascii_vector_size..];
     }
 
+    return null;
+}
+
+fn indexOfAnyVector(text_: []const u8, comptime items: *const [4]u8) ?usize {
+    var text = text_;
+    const v0: strings.AsciiVector = @splat(items[0]);
+    const v1: strings.AsciiVector = @splat(items[1]);
+    const v2: strings.AsciiVector = @splat(items[2]);
+    const v3: strings.AsciiVector = @splat(items[3]);
+    const V1x16 = strings.AsciiVectorU1;
+
+    while (text.len >= strings.ascii_vector_size) {
+        const vec: strings.AsciiVector = text[0..strings.ascii_vector_size].*;
+
+        const any_significant =
+            @as(V1x16, @bitCast(v0 == vec)) |
+            @as(V1x16, @bitCast(v1 == vec)) |
+            @as(V1x16, @bitCast(v2 == vec)) |
+            @as(V1x16, @bitCast(v3 == vec));
+
+        if (@reduce(.Max, any_significant) > 0) {
+            const bitmask = @as(u16, @bitCast(any_significant));
+            const first = @ctz(bitmask);
+            bun.assert(first < strings.ascii_vector_size);
+            return first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr));
+        }
+        text = text[strings.ascii_vector_size..];
+    }
+
+    if (std.mem.indexOfAny(u8, text, items)) |res| return res + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr));
     return null;
 }

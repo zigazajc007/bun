@@ -133,6 +133,7 @@ const templateStringTests: Record<string, TemplateStringTest> = {
   FoldLength7: { expr: '"" + ("\\n" + "\x00").length', capture: true },
   FoldLength8: { expr: '"" + ("æ" + "™").length', capture: true },
   FoldLength9: { expr: '"" + ("\\uD800" + "\\uDF34").length', capture: true },
+  EscapeSequences: { expr: '"\\\'\\"\\\\\\b\\f\\n\\r\\t\\v"', capture: true },
 };
 
 describe("bundler", () => {
