@@ -1,0 +1,33 @@
+/*= basic strings */
+print("abc def");
+print('abc def');
+print(`abc def`);
+/*= basic escapes */
+print("\a\b\c\d\e\f\g\h\i\j\k\l\m\n\o\p\q\r\s\t  \v\w  \y\z\'\"\\\
+");
+/*=[c] newline escape forms 1 */ `
+print(">\\\r< >\\\n< >\\\r\n< >\\\u{2028}< >\\\u{2029}<");
+`
+/*=[c] template literal newlines*/ `
+print(\`line 1\rline 2\nline 3\r\nline 4\u{2028}line 5\u{2029}\`);
+`
+/*=[c] long string using vector path of indexOfCharactersInString */ `
+// double quote ascii
+print("${"a".repeat(10000)}");
+// double quote utf-8
+print("${"æ".repeat(10000)}");
+// template string ascii
+print(\`${"a".repeat(10000)}\`);
+// template string utf-8
+print(\`${"æ".repeat(10000)}\`);
+`
+/*=[c] invalid utf-8 */ new Uint8Array([
+  ...new TextEncoder().encode(`print("`),
+  0xFF, 0xFE, 0xFD, 0xFC, 0xFB, 0xFA,
+  ...new TextEncoder().encode(`");`),
+])
+/*= escape sequence error 1 :-: malformed Unicode character escape sequence */ print("\u");
+/*= escape sequence error 2 :-: malformed Unicode character escape sequence */ print("\u1");
+/*= escape sequence error 3 :-: malformed Unicode character escape sequence */ print("\u12");
+/*= escape sequence error 4 :-: malformed Unicode character escape sequence */ print("\u123");
+/*= escape sequence success */ print("\u1234")

@@ -664,18 +664,11 @@ fn NewLexer_(
             // https://tc39.es/ecma262/#prod-StringLiteral
             // https://tc39.es/ecma262/#prod-TemplateLiteral
 
-            const interesting_characters: []const u8 = comptime switch (quote) {
-                '"' => &.{ quote, '\\', '\r', '\n' }, // LS/PS are allowed in regular strings
-                '\'' => &.{ quote, '\\', '\r', '\n' },
-                '`' => &.{ quote, '\\', '\r', '\n', '\xE2', '$' }, // \xE2 is the first byte of LS/PS which create a newline in a template string
-                0 => &.{ '\\', '\r', '\n' },
-                else => @compileError("bad quote char: [" ++ &[_]u8{quote} ++ "]"),
-            };
-
             bun.assert(lexer.temp_buffer_u8.items.len == 0);
             defer lexer.temp_buffer_u8.clearRetainingCapacity();
 
             var uncommitted_segment: ?[]const u8 = null;
+            var utf8_is_interesting = true;
 
             while (true) {
                 bun.assert(uncommitted_segment == null);
@@ -683,19 +676,30 @@ fn NewLexer_(
                 lexer.current = lexer.end;
                 const remainder = lexer.source.contents[lexer.current..];
                 // LS and PS are allowed
-                const interesting_character_idx = indexOfAnyVector(remainder, interesting_characters) orelse {
+                const interesting_character_idx = switch (utf8_is_interesting) {
+                    inline else => |v| indexOfInterestingCharacterInString(remainder, quote, v),
+                } orelse {
                     // no interesting character between now and end of file; that means the ending quote is missing
                     if (quote == 0) break;
                     return lexer.addDefaultError("Unterminated string literal");
                 };
                 uncommitted_segment = remainder[0..interesting_character_idx];
-                if (!strings.isValidUTF8(uncommitted_segment.?)) { // maybe slow
-                    // uh oh! bad utf-8. TODO: iterate over the bad utf-8 and write one codepoint at a time
-                    // node converts each invalid byte to �
-                    // bun looks like it's supposed to do that but instead doesn't
-                    return lexer.addDefaultError("Invalid utf-8");
-                }
                 lexer.consumeN(interesting_character_idx);
+                if (!utf8_is_interesting and !strings.isValidUTF8(uncommitted_segment.?)) {
+                    while (uncommitted_segment.?.len > 0) {
+                        const len = strings.codepointSize(u8, uncommitted_segment.?[0]);
+                        const min_len = @min(@max(len, 1), uncommitted_segment.?.len);
+                        var bytes: [4]u8 = .{ 0xFF, 0xFF, 0xFF, 0xFF };
+                        @memcpy(bytes[0..min_len], uncommitted_segment.?[0..min_len]);
+                        const decoded = strings.decodeWTF8RuneT(&bytes, len, i32, strings.unicode_replacement);
+                        uncommitted_segment.? = uncommitted_segment.?[min_len..];
+
+                        try lexer.temp_buffer_u8.ensureUnusedCapacity(4);
+                        lexer.temp_buffer_u8.items.len += strings.encodeWTF8Rune(lexer.temp_buffer_u8.unusedCapacitySlice()[0..4], decoded);
+                    }
+                    uncommitted_segment = null;
+                    continue;
+                }
 
                 if (lexer.code_point == quote) {
                     lexer.step();
@@ -738,17 +742,16 @@ fn NewLexer_(
                             try lexer.temp_buffer_u8.append('$');
                         }
                     },
-                    0x2028, 0x2029 => {
-                        if (quote != '`') unreachable; // not interesting character
-                        // handle newline
-                        try lexer.temp_buffer_u8.append('\n');
-                    },
-                    else => {
-                        if (quote != '`') unreachable; // not interesting character
-                        // print codepoint to wtf-8 (interesting character searches for \xE2 and many codepoints start with that. it could even be an invalid
-                        // codepoint and we could be printing a replacement character.)
-                        try lexer.temp_buffer_u8.ensureUnusedCapacity(4);
-                        lexer.temp_buffer_u8.items.len += strings.encodeWTF8Rune(lexer.temp_buffer_u8.unusedCapacitySlice()[0..4], codepoint_to_handle);
+                    else => |c| {
+                        if (c >= 0x80) {
+                            utf8_is_interesting = false;
+                            // print codepoint to wtf-8 (interesting character searches for \xE2 and many codepoints start with that. it could even be an invalid
+                            // codepoint and we could be printing a replacement character.)
+                            try lexer.temp_buffer_u8.ensureUnusedCapacity(4);
+                            lexer.temp_buffer_u8.items.len += strings.encodeWTF8Rune(lexer.temp_buffer_u8.unusedCapacitySlice()[0..4], codepoint_to_handle);
+                        } else {
+                            try lexer.temp_buffer_u8.append(@intCast(c));
+                        }
                     },
                 }
             }
@@ -801,10 +804,19 @@ fn NewLexer_(
             const codepoint_to_append: i32 = switch (first_char_of_escape) {
                 // LineTerminatorSequence
                 '\n', 0x2028, 0x2029 => {
+                    if (comptime is_json) {
+                        // line continuations are not allowed in json
+                        return lexer.addDefaultError("line continuation not allowed in json");
+                    }
                     // nothing to append
                     return;
                 },
                 '\r' => {
+                    if (comptime is_json) {
+                        // line continuations are not allowed in json
+                        return lexer.addDefaultError("line continuation not allowed in json");
+                    }
+
                     // consume a subsequent '\n' if there is one
                     if (lexer.code_point == '\n') lexer.step();
                     // nothing to append
@@ -814,6 +826,11 @@ fn NewLexer_(
                 // https://tc39.es/ecma262/#prod-EscapeSequence
                 // - LegacyOctalEscapeSequence
                 '0'...'7' => |byte| blk: {
+                    if (comptime is_json) {
+                        // octal escapes not allowed in json
+                        return lexer.addDefaultError("octal escape not allowed in json");
+                    }
+
                     // TODO: disallow octal sequences except '\0'
                     const allow_three_long = byte < '4';
                     var result: i32 = 0;
@@ -833,8 +850,6 @@ fn NewLexer_(
                     // append codepoint
                     break :blk result;
                 },
-                // - NonOctalDecimalEscapeSequence
-                '8', '9' => |byte| byte,
                 // - HexEscapeSequence
                 'x' => blk: {
                     lexer.current = lexer.end;
@@ -852,6 +867,10 @@ fn NewLexer_(
                 'u' => blk: {
                     const slice: []const u8 = switch (lexer.code_point) {
                         '{' => blk2: {
+                            if (comptime is_json) {
+                                // \u{ is not allowed in json
+                                return lexer.addDefaultError("unicode curly bracket escape not allowed in json");
+                            }
                             const remainder = lexer.source.contents[lexer.current..];
                             const close_bracket = std.mem.indexOfScalar(u8, remainder, '}') orelse {
                                 return lexer.addDefaultError("malformed Unicode character escape sequence");
@@ -898,15 +917,34 @@ fn NewLexer_(
                 },
                 // - CharacterEscapeSequence
                 //   - SingleEscapeCharacter
-                '\'', '\"', '\\' => |byte| byte,
+                '\'' => blk: {
+                    if (comptime is_json) {
+                        // \' is not allowed in json
+                        return lexer.addDefaultError("unicode single quote escape not allowed in json");
+                    }
+                    break :blk '\'';
+                },
+                '\"', '\\' => |byte| byte,
                 'b' => 0x08,
                 'f' => 0x0C,
                 'n' => 0x0A,
                 'r' => 0x0D,
                 't' => 0x09,
-                'v' => 0x0B,
-                //   - NonEscapeCharacter
-                else => |char| char,
+                'v' => blk: {
+                    if (comptime is_json) {
+                        // \v is not allowed in json
+                        return lexer.addDefaultError("v escape not allowed in json");
+                    }
+                    break :blk 0x0B;
+                },
+                //   - NonEscapeCharacter, NonOctalDecimalEscapeSequence
+                else => |char| blk: {
+                    if (comptime is_json) {
+                        // bad escape characters are not allowed in json
+                        return lexer.addDefaultError("invalid escape not allowed in json");
+                    }
+                    break :blk char;
+                },
             };
 
             // print codepoint to wtf-8
@@ -935,29 +973,24 @@ fn NewLexer_(
             if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and strings.isAllASCII(string_literal_contents);
         }
 
-        inline fn nextCodepointSlice(it: *LexerType) []const u8 {
-            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
-            return if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
+        fn nextCodepointSlice(it: *LexerType) []const u8 {
+            if (it.current >= it.source.contents.len) return "";
+            const len = strings.codepointSize(u8, it.source.contents[it.current]);
+            const min_len = @min(@max(len, 1), it.source.contents[it.current..].len);
+            return it.source.contents[it.current..][0..min_len];
         }
 
-        inline fn nextCodepoint(it: *LexerType) CodePoint {
-            const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
-            const slice = if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
-
-            const code_point = switch (slice.len) {
-                0 => -1,
-                1 => @as(CodePoint, slice[0]),
-                else => strings.decodeWTF8RuneTMultibyte(slice.ptr[0..4], @as(u3, @intCast(slice.len)), CodePoint, strings.unicode_replacement),
-            };
-
+        /// -1 for eof, 0xFFFD for invalid utf-8
+        fn nextCodepoint(it: *LexerType) CodePoint {
+            if (it.current >= it.source.contents.len) return -1;
+            const len = strings.codepointSize(u8, it.source.contents[it.current]);
+            const min_len = @min(@max(len, 1), it.source.contents[it.current..].len);
+            var bytes: [4]u8 = .{ 0xFF, 0xFF, 0xFF, 0xFF };
+            @memcpy(bytes[0..min_len], it.source.contents[it.current..][0..min_len]);
+            const decoded = strings.decodeWTF8RuneT(&bytes, len, i32, strings.unicode_replacement);
             it.end = it.current;
-
-            it.current += if (code_point != strings.unicode_replacement)
-                cp_len
-            else
-                1;
-
-            return code_point;
+            it.current += min_len;
+            return decoded;
         }
 
         fn step(lexer: *LexerType) void {
@@ -3518,33 +3551,92 @@ fn skipToInterestingCharacterInMultilineComment(text_: []const u8) ?u32 {
     return @as(u32, @truncate(@intFromPtr(text.ptr) - @intFromPtr(text_.ptr)));
 }
 
-fn indexOfAnyVector(text_: []const u8, comptime items: []const u8) ?usize {
-    if ((comptime items.len != 4) or text_.len < 64) return std.mem.indexOfAny(u8, text_, items);
-    var text = text_;
-    const v0: strings.AsciiVector = @splat(items[0]);
-    const v1: strings.AsciiVector = @splat(items[1]);
-    const v2: strings.AsciiVector = @splat(items[2]);
-    const v3: strings.AsciiVector = @splat(items[3]);
-    const V1x16 = strings.AsciiVectorU1;
-
-    while (text.len >= strings.ascii_vector_size) {
-        const vec: strings.AsciiVector = text[0..strings.ascii_vector_size].*;
-
-        const any_significant =
-            @as(V1x16, @bitCast(v0 == vec)) |
-            @as(V1x16, @bitCast(v1 == vec)) |
-            @as(V1x16, @bitCast(v2 == vec)) |
-            @as(V1x16, @bitCast(v3 == vec));
-
-        if (@reduce(.Max, any_significant) > 0) {
-            const bitmask = @as(u16, @bitCast(any_significant));
-            const first = @ctz(bitmask);
-            bun.assert(first < strings.ascii_vector_size);
-            return first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr));
+/// for '`', finds the first
+fn nonVectorIndexOfInterestingCharacterInString(text: []const u8, comptime quote: u8, comptime utf8_is_interesting: bool) ?usize {
+    for (text, 0..) |char, i| {
+        switch (quote) {
+            0 => switch (char) {
+                '\\' => return i,
+                0...0x1F => return i,
+                0x80...0xFF => if (utf8_is_interesting) return i,
+                else => {},
+            },
+            '\'', '"' => switch (char) {
+                quote => return i,
+                '\\' => return i,
+                0...0x1F => return i,
+                0x80...0xFF => if (utf8_is_interesting) return i,
+                else => {},
+            },
+            '`' => switch (char) {
+                quote => return i,
+                '\\' => return i,
+                '$' => return i,
+                0...0x1F => return i,
+                0x80...0xFF => if (utf8_is_interesting) return i,
+                else => {},
+            },
+            else => @compileError("bad quote"),
         }
-        text = text[strings.ascii_vector_size..];
+    }
+    return null;
+}
+fn indexOfInterestingCharacterInString(text_: []const u8, comptime quote: u8, comptime utf8_is_interesting: bool) ?usize {
+    var text = text_;
+    if (Environment.isNative and text.len > 128) {
+        const vec_quote: strings.AsciiVector = @splat(quote);
+        const vec_backslash: strings.AsciiVector = @splat('\\');
+        const vec_dollars: strings.AsciiVector = @splat('$');
+        const V1x16 = strings.AsciiVectorU1;
+
+        while (text.len >= strings.ascii_vector_size) {
+            const vec: strings.AsciiVector = text[0..strings.ascii_vector_size].*;
+
+            // vec < strings.min_16_ascii will save a vector comparison
+            const any_significant = switch (quote) {
+                // '\\', < 0x20 incl \r \n
+                0 => switch (utf8_is_interesting) {
+                    true => (@as(V1x16, @bitCast(vec_backslash == vec)) |
+                        @as(V1x16, @bitCast(vec < strings.min_16_ascii)) |
+                        @as(V1x16, @bitCast(vec > strings.max_16_ascii))),
+                    false => @as(V1x16, @bitCast(vec_backslash == vec)) |
+                        @as(V1x16, @bitCast(vec < strings.min_16_ascii)),
+                },
+                // '\''/'"' '\\', < 0x20 incl \r \n
+                '\'', '"' => switch (utf8_is_interesting) {
+                    true => @as(V1x16, @bitCast(vec_quote == vec)) |
+                        @as(V1x16, @bitCast(vec_backslash == vec)) |
+                        @as(V1x16, @bitCast(vec < strings.min_16_ascii)) |
+                        @as(V1x16, @bitCast(vec > strings.max_16_ascii)),
+                    false => @as(V1x16, @bitCast(vec_quote == vec)) |
+                        @as(V1x16, @bitCast(vec_backslash == vec)) |
+                        @as(V1x16, @bitCast(vec < strings.min_16_ascii)),
+                },
+                // '`' '\\', '$', '\xE2', < 0x20 incl \r \n,
+                '`' => switch (utf8_is_interesting) {
+                    true => @as(V1x16, @bitCast(vec_quote == vec)) |
+                        @as(V1x16, @bitCast(vec_backslash == vec)) |
+                        @as(V1x16, @bitCast(vec_dollars == vec)) |
+                        @as(V1x16, @bitCast(vec < strings.min_16_ascii)) |
+                        @as(V1x16, @bitCast(vec > strings.max_16_ascii)),
+                    false => @as(V1x16, @bitCast(vec_quote == vec)) |
+                        @as(V1x16, @bitCast(vec_backslash == vec)) |
+                        @as(V1x16, @bitCast(vec_dollars == vec)) |
+                        @as(V1x16, @bitCast(vec < strings.min_16_ascii)),
+                },
+                else => @compileError("not supported"),
+            };
+
+            if (@reduce(.Max, any_significant) > 0) {
+                const bitmask = @as(u16, @bitCast(any_significant));
+                const first = @ctz(bitmask);
+                bun.assert(first < strings.ascii_vector_size);
+                return first + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr));
+            }
+            text = text[strings.ascii_vector_size..];
+        }
     }
 
-    if (std.mem.indexOfAny(u8, text, items)) |res| return res + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr));
+    if (nonVectorIndexOfInterestingCharacterInString(text, quote, utf8_is_interesting)) |res| return res + (@intFromPtr(text.ptr) - @intFromPtr(text_.ptr));
     return null;
 }
