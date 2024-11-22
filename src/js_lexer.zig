@@ -660,7 +660,14 @@ fn NewLexer_(
 
         pub const InnerStringLiteral = packed struct { suffix_len: u3, needs_decode: bool };
 
-        fn parseDoubleStringCharacters(lexer: *LexerType) ![]const u8 {
+        fn parseStringCharacters(lexer: *LexerType, comptime quote: u8) ![]const u8 {
+            switch (quote) {
+                '"' => {},
+                '\'' => {},
+                '`' => @compileError("TODO"),
+                else => @compileError("not allowed"),
+            }
+
             bun.assert(lexer.temp_buffer_u8.items.len == 0);
             defer lexer.temp_buffer_u8.clearRetainingCapacity();
 
@@ -677,14 +684,15 @@ fn NewLexer_(
             while (true) {
                 bun.assert(uncommitted_segment == null);
 
+                lexer.current = lexer.end;
                 const remainder = lexer.source.contents[lexer.current..];
                 // LS and PS are allowed
-                const interesting_character_idx = indexOfAnyVector(remainder, &.{ '"', '\\', '\r', '\n' }) orelse {
+                const interesting_character_idx = indexOfAnyVector(remainder, &.{ quote, '\\', '\r', '\n' }) orelse {
                     // no interesting character between now and end of file; that means the ending quote is missing
                     return lexer.addDefaultError("Unterminated string literal");
                 };
                 uncommitted_segment = remainder[0..interesting_character_idx];
-                if (!strings.isValidUTF8(uncommitted_segment.?)) {
+                if (!strings.isValidUTF8(uncommitted_segment.?)) { // maybe slow
                     // uh oh! bad utf-8. TODO: iterate over the bad utf-8 and write one codepoint at a time
                     // node converts each invalid byte to �
                     // bun looks like it's supposed to do that but instead doesn't
@@ -711,19 +719,23 @@ fn NewLexer_(
                     },
                     else => unreachable, // not interesting character
                 }
-                lexer.step();
             }
 
             if (lexer.temp_buffer_u8.items.len == 0) {
                 return uncommitted_segment orelse "";
             } else {
+                // commit segment
+                if (uncommitted_segment != null) {
+                    try lexer.temp_buffer_u8.appendSlice(uncommitted_segment.?);
+                    uncommitted_segment = null;
+                }
                 return try lexer.allocator.dupe(u8, lexer.temp_buffer_u8.items);
             }
         }
 
         fn consumeN(lexer: *LexerType, n: usize) void {
             lexer.current += n;
-            lexer.end = lexer.current -| 1;
+            lexer.end = lexer.current -| 1; // should this subtract one unicode codepoint? check(last, last - 1, last - 2, last - 3) and return the first length that parses succesfully?
             lexer.step();
         }
 
@@ -751,45 +763,48 @@ fn NewLexer_(
             // - '\' EscapeSequence
             // - '\' LineTerminatorSequence
 
-            switch (lexer.code_point) {
-                -1 => {
-                    // eof
-                    return lexer.addDefaultError("Unterminated string literal");
-                },
-
+            const first_char_of_escape = lexer.code_point;
+            if (first_char_of_escape == -1) return lexer.addDefaultError("Unterminated string literal");
+            lexer.step(); // consume first char
+            const codepoint_to_append: i32 = switch (first_char_of_escape) {
                 // LineTerminatorSequence
                 '\n', 0x2028, 0x2029 => {
-                    // consume
-                    lexer.step();
                     // nothing to append
+                    return;
                 },
                 '\r' => {
-                    // consume
-                    lexer.step();
                     // consume a subsequent '\n' if there is one
                     if (lexer.code_point == '\n') lexer.step();
                     // nothing to append
+                    return;
                 },
 
                 // https://tc39.es/ecma262/#prod-EscapeSequence
-                // - 0[^\d]
                 // - LegacyOctalEscapeSequence
-                '0'...'7' => {
-                    const is_three = lexer.code_point < '4';
+                '0'...'7' => |byte| blk: {
+                    // TODO: disallow octal sequences except '\0'
+                    const allow_three_long = byte < '4';
                     var result: i32 = 0;
-                    result += lexer.code_point - '0';
-                    lexer.step();
-                    if (lexer.code_point >= '0' and lexer.code_point <= '9') result += lexer.code_point - '0';
-                    if (is_three and lexer.code_point >= '0' and lexer.code_point <= '9') result += lexer.code_point - '0';
-                    // TODO: disallow octal sequences except '\0' in strings except tagged template literals
+                    result += byte - '0';
+                    if (lexer.code_point >= '0' and lexer.code_point <= '9') {
+                        // TODO: lexer.addDefaultError("octal escape literals can't be used in untagged template literals or in strict mode code");
+                        result *= 8;
+                        result += lexer.code_point - '0';
+                        lexer.step();
+                    }
+                    if (allow_three_long and lexer.code_point >= '0' and lexer.code_point <= '9') {
+                        result *= 8;
+                        result += lexer.code_point - '0';
+                        lexer.step();
+                    }
+
+                    // append codepoint
+                    break :blk result;
                 },
                 // - NonOctalDecimalEscapeSequence
-                '8', '9' => |byte| {
-                    lexer.step();
-                    try lexer.temp_buffer_u8.append(byte);
-                },
+                '8', '9' => |byte| byte,
                 // - HexEscapeSequence
-                'x' => {
+                'x' => blk: {
                     const remainder = lexer.source.contents[lexer.current..];
                     if (remainder.len < 2) return lexer.addDefaultError("malformed hexidecimal character escape sequence");
                     lexer.consumeN(2);
@@ -798,16 +813,12 @@ fn NewLexer_(
                     bun.assert(result >= 0 and result <= 0xFF);
 
                     // append codepoint
-                    try lexer.temp_buffer_u8.ensureUnusedCapacity(4);
-                    lexer.temp_buffer_u8.items.len += strings.encodeWTF8Rune(lexer.temp_buffer_u8.unusedCapacitySlice()[0..4], result);
+                    break :blk result;
                 },
                 // - UnicodeEscapeSequence
-                'u' => {
-                    // TODO: allow bad unicode escapes in tagged template literals
-                    // consume
-                    lexer.step();
+                'u' => blk: {
                     const slice: []const u8 = switch (lexer.code_point) {
-                        '{' => blk: {
+                        '{' => blk2: {
                             const remainder = lexer.source.contents[lexer.current..];
                             const close_bracket = std.mem.indexOfScalar(u8, remainder, '}') orelse {
                                 return lexer.addDefaultError("malformed Unicode character escape sequence");
@@ -816,13 +827,13 @@ fn NewLexer_(
                             // consume close bracket
                             bun.assert(lexer.code_point == '}');
                             lexer.step();
-                            break :blk remainder[0..close_bracket];
+                            break :blk2 remainder[0..close_bracket];
                         },
-                        else => blk: {
+                        else => blk2: {
                             const remainder = lexer.source.contents[lexer.current..];
                             if (remainder.len < 4) return lexer.addDefaultError("malformed Unicode character escape sequence");
                             lexer.consumeN(4);
-                            break :blk remainder[0..4];
+                            break :blk2 remainder[0..4];
                         },
                     };
                     // decode slice
@@ -835,66 +846,38 @@ fn NewLexer_(
                     const first_low_surrogate = 0xDC00;
                     const last_low_surrogate = 0xDFFF;
 
-                    if (result >= first_low_surrogate or result <= last_low_surrogate) blk: {
+                    if (result >= first_low_surrogate or result <= last_low_surrogate) blk2: {
                         const low_half = result;
-                        if (lexer.temp_buffer_u8.items.len < 3) break :blk;
+                        if (lexer.temp_buffer_u8.items.len < 3) break :blk2;
                         const last3 = lexer.temp_buffer_u8.items[lexer.temp_buffer_u8.items.len - 3 ..][0..3];
                         const seq_len = strings.wtf8ByteSequenceLength(last3[0]);
-                        if (seq_len != 3) break :blk;
-                        const high_half = strings.decodeWTF8RuneT(&.{ seq_len[0], seq_len[1], seq_len[2], 0 }, seq_len, i32, -1);
-                        if (high_half >= first_high_surrogate and high_half <= last_high_surrogate) {
-                            // merge surrogate pair
-                            lexer.temp_buffer_u8.items.len -= 3;
-                            result = 0x10000 + ((high_half & 0x03ff) << 10) | (low_half & 0x03ff);
-                        }
+                        if (seq_len != 3) break :blk2;
+                        const high_half = strings.decodeWTF8RuneT(&.{ last3[0], last3[1], last3[2], 0 }, seq_len, i32, -1);
+                        if (high_half < first_high_surrogate or high_half > last_high_surrogate) break :blk2;
+                        // merge surrogate pair
+                        lexer.temp_buffer_u8.items.len -= 3;
+                        result = 0x10000 + ((high_half & 0x03ff) << 10) | (low_half & 0x03ff);
                     }
 
                     // append codepoint
-                    try lexer.temp_buffer_u8.ensureUnusedCapacity(4);
-                    lexer.temp_buffer_u8.items.len += strings.encodeWTF8Rune(lexer.temp_buffer_u8.unusedCapacitySlice()[0..4], result);
+                    break :blk result;
                 },
                 // - CharacterEscapeSequence
                 //   - SingleEscapeCharacter
-                '\'', '\"', '\\' => |byte| {
-                    lexer.step();
-                    try lexer.temp_buffer_u8.append(byte);
-                },
-                'b' => {
-                    lexer.step();
-                    try lexer.temp_buffer_u8.append(0x08);
-                },
-                'f' => {
-                    lexer.step();
-                    try lexer.temp_buffer_u8.append(0x0c);
-                },
-                'n' => {
-                    lexer.step();
-                    try lexer.temp_buffer_u8.append(0x0a);
-                },
-                'r' => {
-                    lexer.step();
-                    try lexer.temp_buffer_u8.append(0x0d);
-                },
-                't' => {
-                    lexer.step();
-                    try lexer.temp_buffer_u8.append(0x09);
-                },
-                'v' => {
-                    lexer.step();
-                    try lexer.temp_buffer_u8.append(0x0b);
-                },
+                '\'', '\"', '\\' => |byte| byte,
+                'b' => 0x08,
+                'f' => 0x0C,
+                'n' => 0x0A,
+                'r' => 0x0D,
+                't' => 0x09,
+                'v' => 0x0B,
                 //   - NonEscapeCharacter
-                else => |char| {
-                    // consume
-                    lexer.step();
-                    // append codepoint
-                    try lexer.temp_buffer_u8.ensureUnusedCapacity(4);
-                    lexer.temp_buffer_u8.items.len += strings.encodeWTF8Rune(lexer.temp_buffer_u8.unusedCapacitySlice()[0..4], char);
-                },
-            }
+                else => |char| char,
+            };
 
-            // LF | CR LF | CR | LS | PS
-            // '\n', '\r', '\u{2028}', '\u{2029}'
+            // print codepoint to wtf-8
+            try lexer.temp_buffer_u8.ensureUnusedCapacity(4);
+            lexer.temp_buffer_u8.items.len += strings.encodeWTF8Rune(lexer.temp_buffer_u8.unusedCapacitySlice()[0..4], codepoint_to_append);
         }
 
         fn parseStringLiteralInner(lexer: *LexerType, comptime quote: CodePoint) !InnerStringLiteral {
@@ -1030,8 +1013,8 @@ fn NewLexer_(
             // .env values may not always be quoted.
             lexer.step();
 
-            if (quote == '"') {
-                const string_literal_contents = try lexer.parseDoubleStringCharacters();
+            if (quote == '"' or quote == '\'') {
+                const string_literal_contents = try lexer.parseStringCharacters(quote);
 
                 lexer.string_literal_raw_content = string_literal_contents;
                 lexer.string_literal_raw_format = .utf8;
