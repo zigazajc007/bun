@@ -13,7 +13,9 @@ test("str 4", () => expect("1234567812345678\"").toMatchSnapshot());
 // prettier-ignore
 test("str 5", () => expect("123456781234567\"1").toMatchSnapshot());
 // prettier-ignore
-test("str 5", () => expect("abc\"").toMatchSnapshot());
+test("str 6", () => expect("abc\"").toMatchSnapshot());
+// prettier-ignore
+test("str 7", () => expect("\u{0}\u{1}\u{2}\u{3}\u{4}").toMatchSnapshot());
 
 // tagged template literal allows bad:
 const allowed_bads = [
