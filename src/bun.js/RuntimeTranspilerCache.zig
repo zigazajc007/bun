@@ -7,7 +7,8 @@
 /// Version 8: Fix for generated symbols
 /// Version 9: String printing changes
 /// Version 10: Constant folding for ''.charCodeAt(n)
-/// Version 11: Constant folding fix for `("0" + "1") == 0` and other changes
+/// Version 11: Fix \uFFFF printing regression
+/// Version 12: Constant folding fix for `("0" + "1") == 0` and other changes
 const expected_version = 11;
 
 const bun = @import("root").bun;
