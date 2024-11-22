@@ -2433,12 +2433,21 @@ pub const E = struct {
             if (self.is_rope) return self._ropeCopyToSliceWtf8(slice);
             return @memcpy(slice, self._value_or_segment_value);
         }
-        /// Allocates only if the string is a rope
-        pub fn toWtf8MayAlloc(self: *const String, arena: std.mem.Allocator) ![]const u8 {
-            if (!self.is_rope) return self._value_or_segment_value;
+        pub fn flattenRope(self: *String, arena: std.mem.Allocator) !void {
+            if (!self.is_rope) return;
             const result = try arena.alloc(u8, self._rope_byte_len);
             self._ropeCopyToSliceWtf8(result);
-            return result;
+            const prev_ascii_only = self._is_ascii_only;
+            const prev_from_template_string = self.is_from_template_string;
+            self.* = String.init(result);
+            self._is_ascii_only = prev_ascii_only;
+            self.is_from_template_string = prev_from_template_string;
+        }
+        /// Allocates only if the string is a rope
+        pub fn toWtf8MayAlloc(self: *String, arena: std.mem.Allocator) ![]const u8 {
+            try self.flattenRope(arena);
+            bun.assert(!self.is_rope);
+            return self._value_or_segment_value;
         }
         pub fn dupe(self: *const String, alloc: std.mem.Allocator) ![]const u8 {
             const result = try alloc.alloc(u8, self.byteLength());
@@ -2467,7 +2476,7 @@ pub const E = struct {
             return hasher.final();
         }
 
-        pub fn eqlEString(self: *const String, other: *const String, arena: std.mem.Allocator) !bool {
+        pub fn eqlEString(self: *String, other: *String, arena: std.mem.Allocator) !bool {
             // TODO: there is no need to use toWtf8MayAlloc here, the code for rope strings is just more complicated because it requires
             // iterating potentially two ropes at once
             // alternatively, we can make self be *String and collapse rope strings if there are any
