@@ -31,3 +31,15 @@ print(\`${"æ".repeat(10000)}\`);
 /*= escape sequence error 3 :-: malformed Unicode character escape sequence */ print("\u12");
 /*= escape sequence error 4 :-: malformed Unicode character escape sequence */ print("\u123");
 /*= escape sequence success */ print("\u1234")
+/*=[todo] tagged template literal raw 1 */ print(String.raw`\u`)
+/*=[todo] tagged template literal raw 2 */ print(String.raw`\u{`)
+/*=[todo] tagged template literal raw 3 */ print(String.raw`\u{12345678}`)
+/*=[todo] tagged template literal raw 4 */ print(String.raw`\x`)
+/*= tagged template literal raw 5 */ print(String.raw`\0`)
+/*= tagged template literal raw 6 */ print(String.raw`\9`)
+/*= tagged template literal raw 7 */ print(String.raw`\
+`)
+/*= tagged template literal raw 8 */ print(String.raw`abc`)
+/*= tagged template literal raw 9 */ print(String.raw``)
+/*=[todo] tagged template literal raw 10 */ print(String.raw`æ™`)
+/*= [todo] tagged template literal raw 11 */ let a=class{}; new a()``

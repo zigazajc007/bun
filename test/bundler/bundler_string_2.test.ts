@@ -26,6 +26,7 @@ for (const testdef of file_cont.split("/*=")) {
   if (expectnone != null) throw new Error("bad test: " + tname);
   if (expectnone2 != null) throw new Error("bad test: " + tname);
   const req_eval = tname.includes("[c]");
+  const req_todo = tname.includes("[todo]");
 
   let tvalue: string | Uint8Array = tvalue_raw;
   if (req_eval) {
@@ -42,7 +43,7 @@ for (const testdef of file_cont.split("/*=")) {
   const tpath = "_" + i + ".js";
   await Bun.write(tmpdir + "/" + tpath, new Uint8Array([...header_cont, ...tvalue]));
 
-  test(tname, async () => {
+  const testcb = async () => {
     // result in node
     const noderes = Bun.spawnSync({
       cmd: ["node", tpath],
@@ -89,7 +90,37 @@ for (const testdef of file_cont.split("/*=")) {
       // console.log(nodeerrored, bunerrored, evalres);
       expect(bunerrored).toInclude(terr.trim());
     }
-  });
+  };
+  function syncExecPromise<T>(v: () => Promise<T>): { err: unknown; res: T | null } {
+    let err = null;
+    let res: T | null = null;
+    let success = false;
+    expect(
+      (async (): Promise<number> => {
+        try {
+          res = await v();
+        } catch (e) {
+          err = e;
+        }
+        success = true;
+        return 0;
+      })(),
+    ).resolves.toBe(0);
+    if (!success) throw new Error("promise did not sync exec");
+    return { err, res };
+  }
+  if (req_todo) {
+    const result = syncExecPromise(testcb);
+    if (result.err != null) {
+      test.todo(tname);
+    } else {
+      test(tname, () => {
+        throw new Error("test marked as todo, but it passed. remove todo flag.");
+      });
+    }
+  } else {
+    test(tname, testcb);
+  }
 }
 
 // // prettier-ignore
