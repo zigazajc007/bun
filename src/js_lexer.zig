@@ -30,6 +30,11 @@ pub const PropertyModifierKeyword = tables.PropertyModifierKeyword;
 pub const TypescriptStmtKeyword = tables.TypescriptStmtKeyword;
 pub const TypeScriptAccessibilityModifier = tables.TypeScriptAccessibilityModifier;
 
+const first_high_surrogate = 0xD800;
+const last_high_surrogate = 0xDBFF;
+const first_low_surrogate = 0xDC00;
+const last_low_surrogate = 0xDFFF;
+
 fn notimpl() noreturn {
     Output.panic("not implemented yet!", .{});
 }
@@ -171,7 +176,6 @@ fn NewLexer_(
         allocator: std.mem.Allocator,
         string_literal_raw_content: string = "",
         string_literal_start: usize = 0,
-        string_literal_raw_format: enum { ascii, utf8, needs_decode } = .ascii,
         temp_buffer_u8: std.ArrayList(u8),
 
         /// Only used for JSON stringification when bundling
@@ -297,365 +301,6 @@ fn NewLexer_(
             this.temp_buffer_u8.clearAndFree();
             this.all_comments.clearAndFree();
             this.comments_to_preserve_before.clearAndFree();
-        }
-
-        fn decodeEscapeSequences(lexer: *LexerType, start: usize, text: string, buf: *std.ArrayList(u8)) !void {
-            if (comptime is_json) lexer.is_ascii_only = false;
-
-            var waiting_to_pair_len: usize = 0;
-            var waiting_to_pair_codepoint: i32 = 0;
-
-            const iterator = strings.CodepointIterator{ .bytes = text, .i = 0 };
-            var iter = strings.CodepointIterator.Cursor{};
-            while (iterator.next(&iter)) {
-                const width = iter.width;
-                switch (iter.c) {
-                    '\r' => {
-                        // From the specification:
-                        //
-                        // 11.8.6.1 Static Semantics: TV and TRV
-                        //
-                        // TV excludes the code units of LineContinuation while TRV includes
-                        // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
-                        // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
-                        // include a <CR> or <CR><LF> sequence.
-
-                        // Convert '\r\n' into '\n'
-                        const next_i: usize = iter.i + 1;
-                        iter.i += @as(u32, @intFromBool(next_i < text.len and text[next_i] == '\n'));
-
-                        // Convert '\r' into '\n'
-                        buf.append('\n') catch unreachable;
-                        continue;
-                    },
-
-                    '\\' => {
-                        _ = iterator.next(&iter) or return;
-
-                        const c2 = iter.c;
-
-                        const width2 = iter.width;
-                        switch (c2) {
-                            // https://mathiasbynens.be/notes/javascript-escapes#single
-                            'b' => {
-                                buf.append(0x08) catch unreachable;
-                                continue;
-                            },
-                            'f' => {
-                                buf.append(0x0C) catch unreachable;
-                                continue;
-                            },
-                            'n' => {
-                                buf.append(0x0A) catch unreachable;
-                                continue;
-                            },
-                            'v' => {
-                                // Vertical tab is invalid JSON
-                                // We're going to allow it.
-                                // if (comptime is_json) {
-                                //     lexer.end = start + iter.i - width2;
-                                //     try lexer.syntaxError();
-                                // }
-                                buf.append(0x0B) catch unreachable;
-                                continue;
-                            },
-                            't' => {
-                                buf.append(0x09) catch unreachable;
-                                continue;
-                            },
-                            'r' => {
-                                buf.append(0x0D) catch unreachable;
-                                continue;
-                            },
-
-                            // legacy octal literals
-                            '0'...'7' => {
-                                const octal_start = (iter.i + width2) - 2;
-                                if (comptime is_json) {
-                                    lexer.end = start + iter.i - width2;
-                                    try lexer.syntaxError();
-                                }
-
-                                // 1-3 digit octal
-                                var is_bad = false;
-                                var value: i64 = c2 - '0';
-                                var restore = iter;
-
-                                _ = iterator.next(&iter) or {
-                                    if (value == 0) {
-                                        try buf.append(0);
-                                        return;
-                                    }
-
-                                    try lexer.syntaxError();
-                                    return;
-                                };
-
-                                const c3: CodePoint = iter.c;
-
-                                switch (c3) {
-                                    '0'...'7' => {
-                                        value = value * 8 + c3 - '0';
-                                        restore = iter;
-                                        _ = iterator.next(&iter) or return lexer.syntaxError();
-
-                                        const c4 = iter.c;
-                                        switch (c4) {
-                                            '0'...'7' => {
-                                                const temp = value * 8 + c4 - '0';
-                                                if (temp < 256) {
-                                                    value = temp;
-                                                } else {
-                                                    iter = restore;
-                                                }
-                                            },
-                                            '8', '9' => {
-                                                is_bad = true;
-                                            },
-                                            else => {
-                                                iter = restore;
-                                            },
-                                        }
-                                    },
-                                    '8', '9' => {
-                                        is_bad = true;
-                                    },
-                                    else => {
-                                        iter = restore;
-                                    },
-                                }
-
-                                iter.c = @as(i32, @intCast(value));
-                                if (is_bad) {
-                                    lexer.addRangeError(
-                                        logger.Range{ .loc = .{ .start = @as(i32, @intCast(octal_start)) }, .len = @as(i32, @intCast(iter.i - octal_start)) },
-                                        "Invalid legacy octal literal",
-                                        .{},
-                                        false,
-                                    ) catch unreachable;
-                                }
-                            },
-                            '8', '9' => {
-                                iter.c = c2;
-                            },
-                            // 2-digit hexadecimal
-                            'x' => {
-                                var value: CodePoint = 0;
-                                var c3: CodePoint = 0;
-                                var width3: u3 = 0;
-
-                                _ = iterator.next(&iter) or return lexer.syntaxError();
-                                c3 = iter.c;
-                                width3 = iter.width;
-                                switch (c3) {
-                                    '0'...'9' => {
-                                        value = value * 16 | (c3 - '0');
-                                    },
-                                    'a'...'f' => {
-                                        value = value * 16 | (c3 + 10 - 'a');
-                                    },
-                                    'A'...'F' => {
-                                        value = value * 16 | (c3 + 10 - 'A');
-                                    },
-                                    else => {
-                                        lexer.end = start + iter.i - width3;
-                                        return lexer.syntaxError();
-                                    },
-                                }
-
-                                _ = iterator.next(&iter) or return lexer.syntaxError();
-                                c3 = iter.c;
-                                width3 = iter.width;
-                                switch (c3) {
-                                    '0'...'9' => {
-                                        value = value * 16 | (c3 - '0');
-                                    },
-                                    'a'...'f' => {
-                                        value = value * 16 | (c3 + 10 - 'a');
-                                    },
-                                    'A'...'F' => {
-                                        value = value * 16 | (c3 + 10 - 'A');
-                                    },
-                                    else => {
-                                        lexer.end = start + iter.i - width3;
-                                        return lexer.syntaxError();
-                                    },
-                                }
-
-                                iter.c = value;
-                            },
-                            'u' => {
-                                // We're going to make this an i64 so we don't risk integer overflows
-                                // when people do weird things
-                                var value: i64 = 0;
-
-                                _ = iterator.next(&iter) or return lexer.syntaxError();
-                                var c3 = iter.c;
-                                var width3 = iter.width;
-
-                                // variable-length
-                                if (c3 == '{') {
-                                    if (comptime is_json) {
-                                        lexer.end = start + iter.i - width2;
-                                        try lexer.syntaxError();
-                                    }
-
-                                    const hex_start = (iter.i + start) - width - width2 - width3;
-                                    var is_first = true;
-                                    var is_out_of_range = false;
-                                    variableLength: while (true) {
-                                        _ = iterator.next(&iter) or break :variableLength;
-                                        c3 = iter.c;
-
-                                        switch (c3) {
-                                            '0'...'9' => {
-                                                value = value * 16 | (c3 - '0');
-                                            },
-                                            'a'...'f' => {
-                                                value = value * 16 | (c3 + 10 - 'a');
-                                            },
-                                            'A'...'F' => {
-                                                value = value * 16 | (c3 + 10 - 'A');
-                                            },
-                                            '}' => {
-                                                if (is_first) {
-                                                    lexer.end = (start + iter.i) -| width3;
-                                                    return lexer.syntaxError();
-                                                }
-                                                break :variableLength;
-                                            },
-                                            else => {
-                                                lexer.end = (start + iter.i) -| width3;
-                                                return lexer.syntaxError();
-                                            },
-                                        }
-
-                                        // '\U0010FFFF
-                                        // copied from golang utf8.MaxRune
-                                        if (value > 1114111) {
-                                            is_out_of_range = true;
-                                        }
-                                        is_first = false;
-                                    }
-
-                                    if (is_out_of_range) {
-                                        try lexer.addRangeError(
-                                            .{ .loc = .{ .start = @as(i32, @intCast(start + hex_start)) }, .len = @as(i32, @intCast(((iter.i + start) - hex_start))) },
-                                            "Unicode escape sequence is out of range",
-                                            .{},
-                                            true,
-                                        );
-
-                                        return;
-                                    }
-
-                                    // fixed-length
-                                } else {
-                                    // Fixed-length
-                                    // comptime var j: usize = 0;
-                                    var j: usize = 0;
-                                    while (j < 4) : (j += 1) {
-                                        switch (c3) {
-                                            '0'...'9' => {
-                                                value = value * 16 | (c3 - '0');
-                                            },
-                                            'a'...'f' => {
-                                                value = value * 16 | (c3 + 10 - 'a');
-                                            },
-                                            'A'...'F' => {
-                                                value = value * 16 | (c3 + 10 - 'A');
-                                            },
-                                            else => {
-                                                lexer.end = start + iter.i - width3;
-                                                return lexer.syntaxError();
-                                            },
-                                        }
-
-                                        if (j < 3) {
-                                            _ = iterator.next(&iter) or return lexer.syntaxError();
-                                            c3 = iter.c;
-
-                                            width3 = iter.width;
-                                        }
-                                    }
-                                }
-
-                                iter.c = @as(CodePoint, @truncate(value));
-                            },
-                            '\r' => {
-                                if (comptime is_json) {
-                                    lexer.end = start + iter.i - width2;
-                                    try lexer.syntaxError();
-                                }
-
-                                // Make sure Windows CRLF counts as a single newline
-                                const next_i: usize = iter.i + 1;
-                                iter.i += @as(u32, @intFromBool(next_i < text.len and text[next_i] == '\n'));
-
-                                // Ignore line continuations. A line continuation is not an escaped newline.
-                                continue;
-                            },
-                            '\n', 0x2028, 0x2029 => {
-                                if (comptime is_json) {
-                                    lexer.end = start + iter.i - width2;
-                                    try lexer.syntaxError();
-                                }
-
-                                // Ignore line continuations. A line continuation is not an escaped newline.
-                                continue;
-                            },
-                            else => {
-                                if (comptime is_json) {
-                                    switch (c2) {
-                                        '"', '\\', '/' => {},
-                                        else => {
-                                            lexer.end = start + iter.i - width2;
-                                            try lexer.syntaxError();
-                                        },
-                                    }
-                                }
-                                iter.c = c2;
-                            },
-                        }
-                    },
-                    else => {},
-                }
-
-                if (iter.c == -1) return lexer.addDefaultError("Unexpected end of file");
-
-                const first_high_surrogate = 0xD800;
-                const last_high_surrogate = 0xDBFF;
-                const first_low_surrogate = 0xDC00;
-                const last_low_surrogate = 0xDFFF;
-
-                if (iter.c >= first_low_surrogate and iter.c <= last_low_surrogate and waiting_to_pair_len != 0 and waiting_to_pair_len == buf.items.len) {
-                    // pair
-                    bun.assert(waiting_to_pair_len >= 3);
-                    bun.assert(buf.items.len >= 3);
-
-                    var codepoint_buf: [4]u8 = undefined;
-
-                    const high_half: i32 = waiting_to_pair_codepoint;
-                    const low_half: i32 = iter.c;
-                    const result: i32 = 0x10000 + ((high_half & 0x03ff) << 10) | (low_half & 0x03ff);
-
-                    const len = strings.encodeWTF8Rune(&codepoint_buf, result);
-                    buf.items.len -= 3;
-                    try buf.appendSlice(codepoint_buf[0..len]);
-                    continue;
-                }
-
-                var codepoint_buf: [4]u8 = undefined;
-                const len = strings.encodeWTF8Rune(&codepoint_buf, iter.c);
-                try buf.appendSlice(codepoint_buf[0..len]);
-
-                if (iter.c >= first_high_surrogate and iter.c <= last_high_surrogate) {
-                    // mark pairable
-                    bun.assert(len == 3);
-                    waiting_to_pair_codepoint = iter.c;
-                    waiting_to_pair_len = buf.items.len;
-                }
-            }
         }
 
         pub const InnerStringLiteral = packed struct { suffix_len: u3, needs_decode: bool };
@@ -865,40 +510,9 @@ fn NewLexer_(
                 },
                 // - UnicodeEscapeSequence
                 'u' => blk: {
-                    const slice: []const u8 = switch (lexer.code_point) {
-                        '{' => blk2: {
-                            if (comptime is_json) {
-                                // \u{ is not allowed in json
-                                return lexer.addDefaultError("unicode curly bracket escape not allowed in json");
-                            }
-                            const remainder = lexer.source.contents[lexer.current..];
-                            const close_bracket = std.mem.indexOfScalar(u8, remainder, '}') orelse {
-                                return lexer.addDefaultError("malformed Unicode character escape sequence");
-                            };
-                            lexer.consumeN(close_bracket);
-                            // consume close bracket
-                            bun.assert(lexer.code_point == '}');
-                            lexer.step();
-                            break :blk2 remainder[0..close_bracket];
-                        },
-                        else => blk2: {
-                            lexer.current = lexer.end;
-                            const remainder = lexer.source.contents[lexer.current..];
-                            if (remainder.len < 4) return lexer.addDefaultError("malformed Unicode character escape sequence");
-                            lexer.consumeN(4);
-                            break :blk2 remainder[0..4];
-                        },
-                    };
-                    // decode slice
-                    var result: i32 = decodeHex(slice) orelse return lexer.addDefaultError("malformed Unicode character escape sequence");
-                    if (result > 0x10FFFF) return lexer.addDefaultError("Unicode codepoint must not be greater than 0x10FFFF in escape sequence");
+                    var result: i32 = try lexer.readUnicodeEscape(.allow_surrogate_half);
 
                     // surrogate pairing
-                    const first_high_surrogate = 0xD800;
-                    const last_high_surrogate = 0xDBFF;
-                    const first_low_surrogate = 0xDC00;
-                    const last_low_surrogate = 0xDFFF;
-
                     if (result >= first_low_surrogate or result <= last_low_surrogate) blk2: {
                         const low_half = result;
                         if (lexer.temp_buffer_u8.items.len < 3) break :blk2;
@@ -967,7 +581,6 @@ fn NewLexer_(
             const string_literal_contents = try lexer.parseStringCharacters(quote);
 
             lexer.string_literal_raw_content = string_literal_contents;
-            lexer.string_literal_raw_format = .utf8;
             lexer.string_literal_start = lexer.start;
 
             if (comptime is_json) lexer.is_ascii_only = lexer.is_ascii_only and strings.isAllASCII(string_literal_contents);
@@ -1048,79 +661,77 @@ fn NewLexer_(
             }
         };
 
+        fn readUnicodeEscape(lexer: *LexerType, mode: enum { allow_surrogate_half, deny_surrogate_half }) !i32 {
+            const slice: []const u8 = switch (lexer.code_point) {
+                '{' => blk2: {
+                    if (comptime is_json) {
+                        // \u{ is not allowed in json
+                        return lexer.addDefaultError("unicode curly bracket escape not allowed in json");
+                    }
+                    const remainder = lexer.source.contents[lexer.current..];
+                    const close_bracket = std.mem.indexOfScalar(u8, remainder, '}') orelse {
+                        return lexer.addDefaultError("malformed Unicode character escape sequence");
+                    };
+                    lexer.consumeN(close_bracket);
+                    // consume close bracket
+                    bun.assert(lexer.code_point == '}');
+                    lexer.step();
+                    break :blk2 remainder[0..close_bracket];
+                },
+                else => blk2: {
+                    lexer.current = lexer.end;
+                    const remainder = lexer.source.contents[lexer.current..];
+                    if (remainder.len < 4) return lexer.addDefaultError("malformed Unicode character escape sequence");
+                    lexer.consumeN(4);
+                    break :blk2 remainder[0..4];
+                },
+            };
+            // decode slice
+            const result: i32 = decodeHex(slice) orelse return lexer.addDefaultError("malformed Unicode character escape sequence");
+            if (result > 0x10FFFF) return lexer.addDefaultError("Unicode codepoint must not be greater than 0x10FFFF in escape sequence");
+
+            if (mode == .deny_surrogate_half) {
+                if (result >= first_low_surrogate and result <= last_low_surrogate or result >= first_high_surrogate and result <= last_high_surrogate) {
+                    return lexer.addDefaultError("Unicode codepoint must not be a surrogate half in identifier");
+                }
+            }
+
+            return result;
+        }
+
         // This is an edge case that doesn't really exist in the wild, so it doesn't
         // need to be as fast as possible.
         pub fn scanIdentifierWithEscapes(lexer: *LexerType, kind: IdentifierKind) anyerror!ScanResult {
             var result = ScanResult{ .token = .t_end_of_file, .contents = "" };
-            // First pass: scan over the identifier to see how long it is
-            while (true) {
-                // Scan a unicode escape sequence. There is at least one because that's
-                // what caused us to get on this slow path in the first place.
-                if (lexer.code_point == '\\') {
-                    lexer.step();
-
-                    if (lexer.code_point != 'u') {
-                        try lexer.syntaxError();
-                    }
-                    lexer.step();
-                    if (lexer.code_point == '{') {
-                        // Variable-length
-                        lexer.step();
-                        while (lexer.code_point != '}') {
-                            switch (lexer.code_point) {
-                                '0'...'9', 'a'...'f', 'A'...'F' => {
-                                    lexer.step();
-                                },
-                                else => try lexer.syntaxError(),
-                            }
-                        }
-
-                        lexer.step();
-                    } else {
-                        // Fixed-length
-                        // comptime var j: usize = 0;
-
-                        switch (lexer.code_point) {
-                            '0'...'9', 'a'...'f', 'A'...'F' => {
-                                lexer.step();
-                            },
-                            else => try lexer.syntaxError(),
-                        }
-                        switch (lexer.code_point) {
-                            '0'...'9', 'a'...'f', 'A'...'F' => {
-                                lexer.step();
-                            },
-                            else => try lexer.syntaxError(),
-                        }
-                        switch (lexer.code_point) {
-                            '0'...'9', 'a'...'f', 'A'...'F' => {
-                                lexer.step();
-                            },
-                            else => try lexer.syntaxError(),
-                        }
-                        switch (lexer.code_point) {
-                            '0'...'9', 'a'...'f', 'A'...'F' => {
-                                lexer.step();
-                            },
-                            else => try lexer.syntaxError(),
-                        }
-                    }
-                    continue;
-                }
-
-                if (!isIdentifierContinue(lexer.code_point)) {
-                    break;
-                }
-                lexer.step();
-            }
-
-            // Second pass: re-use our existing escape sequence parser
-            const original_text = lexer.raw();
 
             bun.assert(lexer.temp_buffer_u8.items.len == 0);
             defer lexer.temp_buffer_u8.clearRetainingCapacity();
-            try lexer.temp_buffer_u8.ensureUnusedCapacity(original_text.len);
-            try lexer.decodeEscapeSequences(lexer.start, original_text, &lexer.temp_buffer_u8);
+
+            // Parse the identifier
+            while (true) {
+                // Scan a unicode escape sequence. There is at least one because that's
+                // what caused us to get on this slow path in the first place.
+                const result_codepoint: i32 = switch (lexer.code_point) {
+                    '\\' => blk: {
+                        lexer.step();
+                        if (lexer.code_point != 'u') return lexer.addDefaultError("Escape sequence in identifier must be unicode");
+                        lexer.step();
+                        break :blk try lexer.readUnicodeEscape(.deny_surrogate_half);
+                    },
+                    else => |c| blk: {
+                        if (!isIdentifierContinue(lexer.code_point)) {
+                            break;
+                        }
+                        lexer.step();
+                        break :blk c;
+                    },
+                };
+
+                // append codepoint
+                try lexer.temp_buffer_u8.ensureUnusedCapacity(4);
+                lexer.temp_buffer_u8.items.len += strings.encodeWTF8Rune(lexer.temp_buffer_u8.unusedCapacitySlice()[0..4], result_codepoint);
+            }
+
             result.contents = try lexer.allocator.dupe(u8, lexer.temp_buffer_u8.items);
 
             const identifier = if (kind != .private)
@@ -2273,22 +1884,7 @@ fn NewLexer_(
         }
 
         pub fn toEString(lexer: *LexerType) !js_ast.E.String {
-            switch (lexer.string_literal_raw_format) {
-                .ascii, .utf8 => {
-                    // string_literal_raw_content contains ascii without escapes
-                    return js_ast.E.String.init(lexer.string_literal_raw_content);
-                },
-                .needs_decode => {
-                    // string_literal_raw_content contains escapes (ie '\n') that need to be converted to their values (ie 0x0A).
-                    // escape parsing may cause a syntax error.
-                    // TODO: decode to utf-8 directly. Make sure to handle surrogate halves correctly, including when mixed in with escaped surrogate halves.
-                    bun.assert(lexer.temp_buffer_u8.items.len == 0);
-                    defer lexer.temp_buffer_u8.clearRetainingCapacity();
-                    try lexer.temp_buffer_u8.ensureUnusedCapacity(lexer.string_literal_raw_content.len);
-                    try lexer.decodeEscapeSequences(lexer.string_literal_start, lexer.string_literal_raw_content, &lexer.temp_buffer_u8);
-                    return js_ast.E.String.init(try lexer.allocator.dupe(u8, lexer.temp_buffer_u8.items));
-                },
-            }
+            return js_ast.E.String.init(lexer.string_literal_raw_content);
         }
 
         pub fn toUTF8EString(lexer: *LexerType) !js_ast.E.String {
@@ -2580,10 +2176,8 @@ fn NewLexer_(
                 try lexer.fixWhitespaceAndDecodeJSXEntities(raw_content_slice, &lexer.temp_buffer_u8);
 
                 lexer.string_literal_raw_content = try lexer.allocator.dupe(u8, lexer.temp_buffer_u8.items);
-                lexer.string_literal_raw_format = .utf8;
             } else {
                 lexer.string_literal_raw_content = raw_content_slice;
-                lexer.string_literal_raw_format = .ascii;
             }
         }
 
@@ -2651,7 +2245,6 @@ fn NewLexer_(
                             try lexer.temp_buffer_u8.ensureUnusedCapacity(raw_content_slice.len);
                             try lexer.fixWhitespaceAndDecodeJSXEntities(raw_content_slice, &lexer.temp_buffer_u8);
                             lexer.string_literal_raw_content = try lexer.allocator.dupe(u8, lexer.temp_buffer_u8.items);
-                            lexer.string_literal_raw_format = .utf8;
 
                             if (lexer.temp_buffer_u8.items.len == 0) {
                                 lexer.has_newline_before = true;
@@ -2659,7 +2252,6 @@ fn NewLexer_(
                             }
                         } else {
                             lexer.string_literal_raw_content = raw_content_slice;
-                            lexer.string_literal_raw_format = .ascii;
                         }
                     },
                 }

@@ -22,12 +22,14 @@ for (const testdef of file_cont.split("/*=")) {
   i += 1;
   const [tname_seg, tvalue_raw, expectnone] = testdef.split("*/");
   if (tvalue_raw == null) throw new Error("bad test: tvalue missing");
-  const [tname, terr, expectnone2] = tname_seg.split(":-:");
+  const [tname, terr_in, expectnone2] = tname_seg.split(":-:");
+  let terr = terr_in;
   if (expectnone != null) throw new Error("bad test: " + tname);
   if (expectnone2 != null) throw new Error("bad test: " + tname);
   const req_eval = tname.includes("[c]");
   const req_todo = tname.includes("[todo]");
 
+  if (terr != null && terr.trim().length < 7) terr = "[! terr.len must be > 7 !]";
   let tvalue: string | Uint8Array = tvalue_raw;
   if (req_eval) {
     tvalue = new Function("", "return " + tvalue)();

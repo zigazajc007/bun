@@ -43,3 +43,7 @@ print(\`${"æ".repeat(10000)}\`);
 /*= tagged template literal raw 9 */ print(String.raw``)
 /*=[todo] tagged template literal raw 10 */ print(String.raw`æ™`)
 /*= [todo] tagged template literal raw 11 */ let a=class{}; new a()``
+/*= escaped identifier */ let \u0070 = "escaped identifier"; print(p);
+/*= escaped identifier unicode */ let \u{10334} = "unicode!"; print(𐌴);
+/*= escaped identifier unicode from surrogate halves :-: Unicode codepoint must not be a surrogate half in identifier */ let \uD800\uDF34 = "unicode!"; print(𐌴);
+/*= escaped identifier other :-: Escape sequence in identifier must be unicode */ let \x70 = "escaped identifier!"; print(p);
