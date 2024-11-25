@@ -373,24 +373,28 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                         hex_chars[k & 0xF],
                     });
                 } else {
-                    const k = c - 0x10000;
-                    const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
-                    const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
+                    if (json) {
+                        const k = c - 0x10000;
+                        const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
+                        const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
 
-                    try writer.writeAll(&[_]u8{
-                        '\\',
-                        'u',
-                        hex_chars[lo >> 12],
-                        hex_chars[(lo >> 8) & 15],
-                        hex_chars[(lo >> 4) & 15],
-                        hex_chars[lo & 15],
-                        '\\',
-                        'u',
-                        hex_chars[hi >> 12],
-                        hex_chars[(hi >> 8) & 15],
-                        hex_chars[(hi >> 4) & 15],
-                        hex_chars[hi & 15],
-                    });
+                        try writer.writeAll(&[_]u8{
+                            '\\',
+                            'u',
+                            hex_chars[lo >> 12],
+                            hex_chars[(lo >> 8) & 15],
+                            hex_chars[(lo >> 4) & 15],
+                            hex_chars[lo & 15],
+                            '\\',
+                            'u',
+                            hex_chars[hi >> 12],
+                            hex_chars[(hi >> 8) & 15],
+                            hex_chars[(hi >> 4) & 15],
+                            hex_chars[hi & 15],
+                        });
+                    } else {
+                        try writer.print("\\u{{{d}}}", .{c});
+                    }
                 }
             },
         }
