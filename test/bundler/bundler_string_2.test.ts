@@ -87,10 +87,9 @@ for (const testdef of file_cont.split("/*=")) {
       expect(noderes.exitCode).not.toBe(0);
       expect(bunres.exitCode).not.toBe(0);
       expect(evalres).toBeInstanceOf(Error);
-      const nodeerrored = noderes.stdout.toString("utf-8");
       const bunerrored = bunres.stderr?.toString("utf-8");
-      // console.log(nodeerrored, bunerrored, evalres);
       expect(bunerrored).toInclude(terr.trim());
+      expect(bunerrored).not.toInclude("panic");
     }
   };
   function syncExecPromise<T>(v: () => Promise<T>): { err: unknown; res: T | null } {
