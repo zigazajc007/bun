@@ -105,10 +105,10 @@ de\u{2
 /*=[c] identifier with null byte 4c*+ :-: error: Expected " */`print(abc\u{1});`
 /*= empty escape :-: malformed Unicode character escape sequence */print("\u{})
 /*=[no-eval] 1st valid 2nd invalid */print("\uD888\u1234")
-/*=[c] no unterminated string literal error */new Uint8Array([...new TextEncoder().encode('print("'), 0xE9, new TextEncoder().encode('")')])
-/*=[c] bad unicode replaced properly 1 */new Uint8Array([...new TextEncoder().encode('print("'), 0xF4, 0xBF, 0xBF, 0xBF, new TextEncoder().encode('")')])
-/*=[c] bad unicode replaced properly 2 */new Uint8Array([...new TextEncoder().encode('print("'), 0xC0, 0xAF, new TextEncoder().encode('")')])
-/*=[c] source code is utf-8, not wtf-8 1 */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify("'), 0xED, 0xA0, 0x80, new TextEncoder().encode('"))')])
-/*=[c] source code is utf-8, not wtf-8 2 */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify("'), 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, new TextEncoder().encode('"))')])
-/*=[c] source code is utf-8, not wtf-8 3 */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify("'), 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, new TextEncoder().encode('"))')])
+/*=[c] no unterminated string literal error */new Uint8Array([...new TextEncoder().encode('print("'), 0xE9, ...new TextEncoder().encode('")')])
+/*=[c] bad unicode replaced properly 1 */new Uint8Array([...new TextEncoder().encode('print("'), 0xF4, 0xBF, 0xBF, 0xBF, ...new TextEncoder().encode('")')])
+/*=[c] bad unicode replaced properly 2 */new Uint8Array([...new TextEncoder().encode('print("'), 0xC0, 0xAF, ...new TextEncoder().encode('")')])
+/*=[c] source code is utf-8, not wtf-8 1 */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify("'), 0xED, 0xA0, 0x80, ...new TextEncoder().encode('"))')])
+/*=[c] source code is utf-8, not wtf-8 2 */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify("'), 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, ...new TextEncoder().encode('"))')])
+/*=[c] source code is utf-8, not wtf-8 3 */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify("'), 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, ...new TextEncoder().encode('"))')])
 /*=[no-node][no-eval] html comments are not implemented :-: Unsupported syntax: Legacy HTML comments not implemented yet! */<!-- hello

@@ -19,8 +19,6 @@ const FeatureFlags = @import("feature_flags.zig");
 const JavascriptString = []const u16;
 const Indentation = bun.js_printer.Options.Indentation;
 
-const unicode = std.unicode;
-
 const Source = logger.Source;
 pub const T = tables.T;
 pub const Keywords = tables.Keywords;
@@ -611,25 +609,33 @@ fn NewLexer_(
             lexer.string_literal_raw = res;
         }
 
-        fn nextCodepointSlice(it: *LexerType) []const u8 {
-            if (it.current >= it.source.contents.len) return "";
-            const len = strings.codepointSize(u8, it.source.contents[it.current]);
-            const min_len = @min(@max(len, 1), it.source.contents[it.current..].len);
-            return it.source.contents[it.current..][0..min_len];
+        fn _advanceByBytes(self: *LexerType, bytes: usize) void {
+            self.end = self.current;
+            self.current += bytes;
         }
 
         /// -1 for eof, 0xFFFD for invalid utf-8
-        fn nextCodepoint(it: *LexerType) CodePoint {
-            const next_slice = it.nextCodepointSlice();
-            const code_point: i32 = switch (next_slice.len) {
-                0 => -1,
-                1 => if (next_slice[0] < 0x80) next_slice[0] else strings.unicode_replacement,
-                // .ptr[0..4] is safe here because decodeWTF8RuneTMultibyte won't access the out-of-bounds items with len set to the bounds limit
-                else => strings.decodeWTF8RuneTMultibyte(next_slice.ptr[0..4], @intCast(next_slice.len), i32, strings.unicode_replacement),
+        fn nextCodepoint(self: *LexerType) CodePoint {
+            const rem = self.source.contents[self.current..];
+            if (rem.len == 0) {
+                self._advanceByBytes(0);
+                return -1;
+            }
+            const len = std.unicode.utf8ByteSequenceLength(self.source.contents[self.current]) catch {
+                self._advanceByBytes(1);
+                return strings.unicode_replacement;
             };
-            it.end = it.current;
-            it.current += next_slice.len;
-            return code_point;
+            if (rem.len < len) {
+                self._advanceByBytes(1);
+                return strings.unicode_replacement;
+            }
+            const bytes = rem[0..len];
+            const res = std.unicode.utf8Decode(bytes) catch {
+                self._advanceByBytes(1);
+                return strings.unicode_replacement;
+            };
+            self._advanceByBytes(bytes.len);
+            return res;
         }
 
         fn step(lexer: *LexerType) void {

@@ -27,15 +27,7 @@ const crashing = new Set<string>([
   "test_parsing/i_structure_500_nested_arrays.json", // probably only fails in debug builds
 ]);
 // fails, expect the test to fail
-const failing = new Set<string>([
-  "test_parsing/i_string_UTF8_surrogate_U+D800.json", // source files are being handled as wtf-8, not utf-8
-  "test_transform/string_1_invalid_codepoint.json", // same
-  "test_transform/string_2_invalid_codepoints.json", // same
-  "test_transform/string_3_invalid_codepoints.json", // same
-
-  "test_parsing/i_string_not_in_unicode_range.json", // 0xF4 0xBF 0xBF 0xBF => utf-8 trail characters are being reinterpereted as codepoints
-  "test_parsing/i_string_overlong_sequence_2_bytes.json", // 0xC0, 0xAF => same as above
-]);
+const failing = new Set<string>([]);
 // looser parsing than JSON.parse()
 const loose = new Set<string>([
   // trailing junk allowed
