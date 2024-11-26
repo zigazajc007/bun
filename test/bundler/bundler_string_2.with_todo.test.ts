@@ -102,24 +102,6 @@ for (const testdef of file_cont.split("/*=")) {
       if (REQUIRE_EXACT_ERROR_NAMES) expect(bunerrored).toInclude(terr.trim());
     }
   };
-  function syncExecPromise<T>(v: () => Promise<T>): { err: unknown; res: T | null } {
-    let err = null;
-    let res: T | null = null;
-    let success = false;
-    expect(
-      (async (): Promise<number> => {
-        try {
-          res = await v();
-        } catch (e) {
-          err = e;
-        }
-        success = true;
-        return 0;
-      })(),
-    ).resolves.toBe(0);
-    if (!success) throw new Error("promise did not sync exec");
-    return { err, res };
-  }
   test.todoIf(req_todo)(tname, testcb);
 }
 
