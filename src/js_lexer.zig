@@ -525,6 +525,10 @@ fn NewLexer_(
                     // append codepoint
                     break :blk result;
                 },
+                '8'...'9' => |byte| blk: {
+                    if (!allow_octal_literal) return .{ .start = lexer.start, .msg = "numeric escape not allowed in untagged template literals" };
+                    break :blk byte;
+                },
                 // - HexEscapeSequence
                 'x' => blk: {
                     const remainder = lexer.getRemainder();
