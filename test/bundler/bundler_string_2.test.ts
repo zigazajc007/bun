@@ -32,6 +32,7 @@ for (const testdef of file_cont.split("/*=")) {
   const req_eval = tname.includes("[c]");
   const req_todo = tname.includes("[todo]");
   const req_json = tname.includes("[json]");
+  const req_no_eval = tname.includes("[no-eval]");
 
   if (terr != null && terr.trim().length < 7) terr = "[! terr.len must be > 7 !]";
   let tvalue: string | Uint8Array = tvalue_raw;
@@ -45,6 +46,7 @@ for (const testdef of file_cont.split("/*=")) {
   } catch (e) {
     tdecoded = null;
   }
+  if (req_no_eval) tdecoded = null;
 
   const tpath = "_" + i + ".js";
   if (req_json) {

@@ -555,7 +555,7 @@ fn NewLexer_(
                     };
 
                     // surrogate pairing
-                    if (result >= first_low_surrogate or result <= last_low_surrogate) blk2: {
+                    if (result >= first_low_surrogate and result <= last_low_surrogate) blk2: {
                         const low_half = result;
                         if (lexer.temp_buffer_u8.items.len < 3) break :blk2;
                         const last3 = lexer.temp_buffer_u8.items[lexer.temp_buffer_u8.items.len - 3 ..][0..3];
