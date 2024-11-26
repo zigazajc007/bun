@@ -385,7 +385,7 @@ fn NewLexer_(
                     quote => unreachable, // handled above
                     '\\' => {
                         // handle escape sequence
-                        if (try lexer.handleEscapeSequence()) |failure| {
+                        if (try lexer.handleEscapeSequence(quote != '`')) |failure| {
                             if (quote != '`') {
                                 // allowed to fail immediately
                                 return failure.show(lexer);
@@ -469,7 +469,7 @@ fn NewLexer_(
         }
 
         /// parses an escape sequence excluding '\\' and appends it to lexer.temp_buffer_u8. merges an unpaired surrogate if necessary.
-        fn handleEscapeSequence(lexer: *LexerType) !?StringLiteralError {
+        fn handleEscapeSequence(lexer: *LexerType, allow_octal_literal: bool) !?StringLiteralError {
             // - '\' EscapeSequence
             // - '\' LineTerminatorSequence
 
@@ -511,7 +511,7 @@ fn NewLexer_(
                     var result: i32 = 0;
                     result += byte - '0';
                     if (lexer.code_point >= '0' and lexer.code_point <= '9') {
-                        // TODO: lexer.addDefaultError("octal escape literals can't be used in untagged template literals or in strict mode code");
+                        if (!allow_octal_literal) return .{ .start = lexer.start, .msg = "octal escape not allowed in untagged template literals" };
                         result *= 8;
                         result += lexer.code_point - '0';
                         lexer.step();
