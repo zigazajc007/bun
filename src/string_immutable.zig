@@ -5235,8 +5235,8 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
             const codepoint = @as(
                 CodePointType,
                 switch (cp_len) {
-                    0 => return false,
-                    1 => it.bytes[pos],
+                    0 => 0,
+                    1 => if (it.bytes[pos] < 0x80) it.bytes[pos] else unicode_replacement,
                     else => decodeWTF8RuneTMultibyte(it.bytes[pos..].ptr[0..4], cp_len, CodePointType, error_char),
                 },
             );
@@ -5247,7 +5247,7 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
                     codepoint
                 else
                     unicode_replacement,
-                .width = if (codepoint != error_char) cp_len else 1,
+                .width = if (codepoint != error_char) @max(cp_len, 1) else 1,
             };
 
             return true;

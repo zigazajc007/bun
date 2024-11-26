@@ -452,7 +452,7 @@ fn NewLexer_(
         /// maximum 0xFFFFFF, else returns null
         fn decodeHex(hex: []const u8) ?i32 {
             var result: i32 = 0;
-            if (hex.len == 0 or hex.len > 6) return null; // too big
+            if (hex.len > 6) return null; // too big
             for (hex) |byte| switch (byte) {
                 '0'...'9' => {
                     result = result * 16 | (byte - '0');
@@ -506,12 +506,12 @@ fn NewLexer_(
                         return lexer.addDefaultError("octal escape not allowed in json");
                     }
 
-                    // TODO: disallow octal sequences except '\0'
                     const allow_three_long = byte < '4';
+                    var has_multi = false;
                     var result: i32 = 0;
                     result += byte - '0';
                     if (lexer.code_point >= '0' and lexer.code_point <= '9') {
-                        if (!allow_octal_literal) return .{ .start = lexer.start, .msg = "octal escape not allowed in untagged template literals" };
+                        has_multi = true;
                         result *= 8;
                         result += lexer.code_point - '0';
                         lexer.step();
@@ -521,6 +521,8 @@ fn NewLexer_(
                         result += lexer.code_point - '0';
                         lexer.step();
                     }
+
+                    if (!allow_octal_literal and (result != 0 or has_multi)) return .{ .start = lexer.start, .msg = "octal escape not allowed in untagged template literals" };
 
                     // append codepoint
                     break :blk result;
@@ -600,6 +602,7 @@ fn NewLexer_(
             };
 
             // print codepoint to wtf-8
+            if ((comptime is_json) and codepoint_to_append >= 0x80) lexer.is_ascii_only = false;
             try lexer.temp_buffer_u8.ensureUnusedCapacity(4);
             lexer.temp_buffer_u8.items.len += strings.encodeWTF8Rune(lexer.temp_buffer_u8.unusedCapacitySlice()[0..4], codepoint_to_append);
             return null;
@@ -709,12 +712,17 @@ fn NewLexer_(
                         return .{ .failure = .{ .start = lexer.start, .msg = "unicode curly bracket escape not allowed in json" } };
                     }
                     lexer.step();
+                    var is_valid = false;
                     // consume leading zeroes, 000000000000064 is allowed even though it's > 6 chars
-                    while (lexer.code_point == '0') lexer.step();
+                    if (lexer.code_point == '0') {
+                        is_valid = true;
+                        while (lexer.code_point == '0') lexer.step();
+                    }
                     const remainder = lexer.getRemainder();
                     const close_bracket = std.mem.indexOfScalar(u8, remainder[0..@min(remainder.len, 8)], '}') orelse {
                         return .{ .failure = .{ .start = lexer.start, .msg = "malformed Unicode character escape sequence" } };
                     };
+                    if (!is_valid and close_bracket == 0) return .{ .failure = .{ .start = lexer.start, .msg = "malformed Unicode character escape sequence" } };
                     was_curly = true;
                     break :blk2 remainder[0..close_bracket];
                 },

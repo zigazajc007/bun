@@ -2,6 +2,8 @@ import { test, expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunExe, isWindows, tempDirWithFiles } from "harness";
 
+const REQUIRE_EXACT_ERROR_NAMES = true;
+
 // execute in bun & node, compare output
 const file_cont = readFileSync(import.meta.dirname + "/bundler_string_2.fixture.txt", "utf-8");
 
@@ -76,11 +78,16 @@ for (const testdef of file_cont.split("/*=")) {
     if (terr == null) {
       // expect ok and same result
       expect(noderes.exitCode).toBe(0);
-      expect(bunres.exitCode).toBe(0);
       if (tdecoded != null) expect(evalres).toBeTypeOf("string");
       const nodeprinted = noderes.stdout.toString("utf-8");
       const bunprinted = bunres.stdout.toString("utf-8");
-      expect(bunprinted).toBe(nodeprinted);
+      expect({
+        bunres_exitCode: bunres.exitCode,
+        bunprinted: bunprinted,
+      }).toEqual({
+        bunres_exitCode: 0,
+        bunprinted: nodeprinted,
+      });
       if (tdecoded != null) expect(bunprinted).toBe(evalres as string);
     } else {
       // expect error
@@ -88,8 +95,8 @@ for (const testdef of file_cont.split("/*=")) {
       expect(bunres.exitCode).not.toBe(0);
       expect(evalres).toBeInstanceOf(Error);
       const bunerrored = bunres.stderr?.toString("utf-8");
-      expect(bunerrored).toInclude(terr.trim());
       expect(bunerrored).not.toInclude("panic");
+      if (REQUIRE_EXACT_ERROR_NAMES) expect(bunerrored).toInclude(terr.trim());
     }
   };
   function syncExecPromise<T>(v: () => Promise<T>): { err: unknown; res: T | null } {
@@ -110,18 +117,7 @@ for (const testdef of file_cont.split("/*=")) {
     if (!success) throw new Error("promise did not sync exec");
     return { err, res };
   }
-  if (req_todo) {
-    const result = syncExecPromise(testcb);
-    if (result.err != null) {
-      test.todo(tname);
-    } else {
-      test(tname, () => {
-        throw new Error("test marked as todo, but it passed. remove todo flag.");
-      });
-    }
-  } else {
-    test(tname, testcb);
-  }
+  test.todoIf(req_todo)(tname, testcb);
 }
 
 // // prettier-ignore

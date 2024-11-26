@@ -4,7 +4,7 @@ print('abc def');
 print(`abc def`);
 /*= basic escapes */
 print("\a\b\c\d\e\f\g\h\i\j\k\l\m\n\o\p\q\r\s\t  \v\w  \y\z\'\"\\\
-");
+\u{0}\u{1}\u{2}\u0000\u0001\u0002\0");
 /*=[c] newline escape forms 1 */ `
 print(">\\\r< >\\\n< >\\\r\n< >\\\u{2028}< >\\\u{2029}<");
 `
@@ -79,3 +79,28 @@ de\u{2
 /*= unicode identifier 3 */var _\u{104A6} = "1"; print(_𐒦);
 /*= unicode identifier 4 :-: error: Invalid identifier */var \u{104A6} = "1"; print(𐒦);
 /*=[c] allowed to have as many zeroes as you want */`print("\\u{${"0".repeat(1000)}64}")`
+/*= identifier with null byte 1 :-: error: Invalid identifier */var \u{0} = "1"; print(\u{0});
+/*= identifier with null byte 2 :-: error: Invalid identifier */print(\u{0});
+/*= identifier with null byte 3 :-: error: Invalid identifier */var \u0000 = "1"; print(\u0000);
+/*= identifier with null byte 4 :-: error: Invalid identifier */print(\u0000);
+/*= identifier with null byte 1+ :-: error: Invalid identifier */var abc\u{0} = "1"; print(abc\u{0});
+/*= identifier with null byte 2+ :-: error: Invalid identifier */print(abc\u{0});
+/*= identifier with null byte 3+ :-: error: Invalid identifier */var abc\u0000 = "1"; print(abc\u0000);
+/*= identifier with null byte 4+ :-: error: Invalid identifier */print(abc\u0000);
+/*= identifier with null byte 1* :-: error: Invalid identifier */var \u{1} = "1"; print(\u{1});
+/*= identifier with null byte 2* :-: error: Invalid identifier */print(\u{1});
+/*= identifier with null byte 3* :-: error: Invalid identifier */var \u0001 = "1"; print(\u0001);
+/*= identifier with null byte 4* :-: error: Invalid identifier */print(\u0001);
+/*= identifier with null byte 1*+ :-: error: Invalid identifier */var abc\u{1} = "1"; print(abc\u{1});
+/*= identifier with null byte 2*+ :-: error: Invalid identifier */print(abc\u{1});
+/*= identifier with null byte 3*+ :-: error: Invalid identifier */var abc\u0001 = "1"; print(abc\u0001);
+/*= identifier with null byte 4*+ :-: error: Invalid identifier */print(abc\u0001);
+/*=[c] identifier with null byte 3c :-: error: Expected " */`var \u{0} = "1"; print(\u{0});`
+/*=[c] identifier with null byte 4c :-: error: Unexpected */`print(\u{0});`
+/*=[c] identifier with null byte 3c+ :-: error: Expected " */`var abc\u{0} = "1"; print(abc\u{0});`
+/*=[c] identifier with null byte 4c+ :-: error: Expected " */`print(abc\u{0});`
+/*=[c] identifier with null byte 3c* :-: error: Expected " */`var \u{1} = "1"; print(\u{1});`
+/*=[c] identifier with null byte 4c* :-: error: Unexpected */`print(\u{1});`
+/*=[c] identifier with null byte 3c*+ :-: error: Expected " */`var abc\u{1} = "1"; print(abc\u{1});`
+/*=[c] identifier with null byte 4c*+ :-: error: Expected " */`print(abc\u{1});`
+/*= empty escape :-: malformed Unicode character escape sequence */print("\u{})
