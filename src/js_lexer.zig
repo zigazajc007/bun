@@ -709,6 +709,8 @@ fn NewLexer_(
                         return .{ .failure = .{ .start = lexer.start, .msg = "unicode curly bracket escape not allowed in json" } };
                     }
                     lexer.step();
+                    // consume leading zeroes, 000000000000064 is allowed even though it's > 6 chars
+                    while (lexer.code_point == '0') lexer.step();
                     const remainder = lexer.getRemainder();
                     const close_bracket = std.mem.indexOfScalar(u8, remainder[0..@min(remainder.len, 8)], '}') orelse {
                         return .{ .failure = .{ .start = lexer.start, .msg = "malformed Unicode character escape sequence" } };

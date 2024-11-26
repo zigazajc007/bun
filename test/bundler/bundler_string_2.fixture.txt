@@ -78,3 +78,4 @@ de\u{2
 /*= unicode identifier 2 :-: error: Expected identifier but found */var 𐒦 = "1"; print(𐒦);
 /*= unicode identifier 3 */var _\u{104A6} = "1"; print(_𐒦);
 /*= unicode identifier 4 :-: error: Invalid identifier */var \u{104A6} = "1"; print(𐒦);
+/*=[c] allowed to have as many zeroes as you want */`print("\\u{${"0".repeat(1000)}64}")`
