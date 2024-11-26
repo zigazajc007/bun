@@ -105,3 +105,4 @@ de\u{2
 /*=[c] identifier with null byte 4c*+ :-: error: Expected " */`print(abc\u{1});`
 /*= empty escape :-: malformed Unicode character escape sequence */print("\u{})
 /*=[no-eval] 1st valid 2nd invalid */print("\uD888\u1234")
+/*=[c] no unterminated string literal error */new Uint8Array([...new TextEncoder().encode('print("'), 0xE9, new TextEncoder().encode(')')])
