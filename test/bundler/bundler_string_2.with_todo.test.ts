@@ -32,6 +32,7 @@ for (const testdef of file_cont.split("/*=")) {
   const req_eval = tname.includes("[c]");
   const req_todo = tname.includes("[todo]");
   const req_no_eval = tname.includes("[no-eval]");
+  const req_no_node = tname.includes("[no-node]");
 
   if (terr != null && terr.trim().length < 7) terr = "[! terr.len must be > 7 !]";
   let tvalue: string | Uint8Array = tvalue_raw;
@@ -52,13 +53,15 @@ for (const testdef of file_cont.split("/*=")) {
 
   const testcb = async () => {
     // result in node
-    const noderes = Bun.spawnSync({
-      cmd: ["node", tpath],
-      cwd: tmpdir,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: terr != null ? "pipe" : "inherit",
-    });
+    const noderes = req_no_node
+      ? null
+      : Bun.spawnSync({
+          cmd: ["node", tpath],
+          cwd: tmpdir,
+          stdin: "pipe",
+          stdout: "pipe",
+          stderr: terr != null ? "pipe" : "inherit",
+        });
     // result in bun
     const bunres = Bun.spawnSync({
       cmd: [bunExe(), tpath],
@@ -80,21 +83,21 @@ for (const testdef of file_cont.split("/*=")) {
     // expects
     if (terr == null) {
       // expect ok and same result
-      expect(noderes.exitCode).toBe(0);
+      if (!req_no_node) expect(noderes!.exitCode).toBe(0);
       if (tdecoded != null) expect(evalres).toBeTypeOf("string");
-      const nodeprinted = noderes.stdout.toString("utf-8");
+      const nodeprinted = req_no_node ? null : noderes!.stdout.toString("utf-8");
       const bunprinted = bunres.stdout.toString("utf-8");
       expect({
         bunres_exitCode: bunres.exitCode,
         bunprinted: bunprinted,
       }).toEqual({
         bunres_exitCode: 0,
-        bunprinted: nodeprinted,
+        bunprinted: req_no_node ? "<req_no_node>" : nodeprinted!,
       });
       if (tdecoded != null) expect(bunprinted).toBe(evalres as string);
     } else {
       // expect error
-      expect(noderes.exitCode).not.toBe(0);
+      if (!req_no_node) expect(noderes!.exitCode).not.toBe(0);
       expect(bunres.exitCode).not.toBe(0);
       if (tdecoded != null) expect(evalres).toBeInstanceOf(Error);
       const bunerrored = bunres.stderr?.toString("utf-8");

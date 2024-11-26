@@ -290,22 +290,6 @@ fn NewLexer_(
             // }
         }
 
-        /// Look ahead at the next n codepoints without advancing the iterator.
-        /// If fewer than n codepoints are available, then return the remainder of the string.
-        fn peek(it: *LexerType, n: usize) string {
-            const original_i = it.current;
-            defer it.current = original_i;
-
-            var end_ix = original_i;
-            for (0..n) |_| {
-                const next_codepoint = it.nextCodepointSlice();
-                if (next_codepoint.len == 0) break;
-                end_ix += next_codepoint.len;
-            }
-
-            return it.source.contents[original_i..end_ix];
-        }
-
         pub inline fn isIdentifierOrKeyword(lexer: LexerType) bool {
             return @intFromEnum(lexer.token) >= @intFromEnum(T.t_identifier);
         }
@@ -1479,7 +1463,8 @@ fn NewLexer_(
                             },
                             // Handle legacy HTML-style comments
                             '!' => {
-                                if (strings.eqlComptime(lexer.peek("--".len), "--")) {
+                                const rem = lexer.getRemainder();
+                                if (rem.len >= 3 and strings.eqlComptime(rem[1..3], "--")) {
                                     try lexer.addUnsupportedSyntaxError("Legacy HTML comments not implemented yet!");
                                     return;
                                 }
