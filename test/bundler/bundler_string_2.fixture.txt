@@ -45,7 +45,9 @@ print(\`${"æ".repeat(10000)}\`);
 /*= template literal regular */ print(`æ™`)
 /*= tagged template literal raw 11 */; function a(){return b => print(""+b)}; new a()``/*=
 /*= escaped identifier */ let \u0070 = "escaped identifier"; print(p);
+/*= escaped identifier 2 */ let abc\u0070 = "escaped identifier"; print(abcp);
 /*= escaped identifier unicode */ let \u{10334} = "unicode!"; print(𐌴);
+/*= escaped identifier unicode 2 */ let abc\u{10334} = "unicode!"; print(abc𐌴);
 /*= escaped identifier unicode from surrogate halves :-: Unicode codepoint must not be a surrogate half in identifier */ let \uD800\uDF34 = "unicode!"; print(𐌴);
 /*= escaped identifier other :-: Escape sequence in identifier must be unicode */ let \x70 = "escaped identifier!"; print(p);
 /*= syntax error :-: error: Unexpected end of file */!!!
@@ -72,3 +74,7 @@ de\u{2
 /*= numeric escape 2 */print('\8')
 /*= numeric escape 3 :-: error: numeric escape not allowed in untagged template literals */print(`\8`)
 /*= numeric escape 4 */print(String.raw`\8`)
+/*= unicode identifier 1 */var _𐒦 = "1"; print(_𐒦);
+/*= unicode identifier 2 :-: error: Expected identifier but found */var 𐒦 = "1"; print(𐒦);
+/*= unicode identifier 3 */var _\u{104A6} = "1"; print(_𐒦);
+/*= unicode identifier 4 :-: error: Invalid identifier */var \u{104A6} = "1"; print(𐒦);

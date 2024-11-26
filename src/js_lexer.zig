@@ -747,11 +747,13 @@ fn NewLexer_(
 
         // This is an edge case that doesn't really exist in the wild, so it doesn't
         // need to be as fast as possible.
-        pub fn scanIdentifierWithEscapes(lexer: *LexerType, kind: IdentifierKind) anyerror!ScanResult {
+        pub fn scanIdentifierWithEscapes(lexer: *LexerType, kind: IdentifierKind, prepend: []const u8) anyerror!ScanResult {
             var result = ScanResult{ .token = .t_end_of_file, .contents = "" };
 
             bun.assert(lexer.temp_buffer_u8.items.len == 0);
             defer lexer.temp_buffer_u8.clearRetainingCapacity();
+
+            try lexer.temp_buffer_u8.appendSlice(prepend);
 
             // Parse the identifier
             while (true) {
@@ -963,7 +965,7 @@ fn NewLexer_(
                             // "#foo"
                             lexer.step();
                             if (lexer.code_point == '\\') {
-                                lexer.identifier = (try lexer.scanIdentifierWithEscapes(.private)).contents;
+                                lexer.identifier = (try lexer.scanIdentifierWithEscapes(.private, "")).contents;
                             } else {
                                 if (!isIdentifierStart(lexer.code_point)) {
                                     try lexer.syntaxError();
@@ -974,7 +976,7 @@ fn NewLexer_(
                                     lexer.step();
                                 }
                                 if (lexer.code_point == '\\') {
-                                    lexer.identifier = (try lexer.scanIdentifierWithEscapes(.private)).contents;
+                                    lexer.identifier = (try lexer.scanIdentifierWithEscapes(.private, lexer.raw())).contents;
                                 } else {
                                     lexer.identifier = lexer.raw();
                                 }
@@ -1578,7 +1580,7 @@ fn NewLexer_(
                             lexer.identifier = lexer.raw();
                             lexer.token = Keywords.get(lexer.identifier) orelse T.t_identifier;
                         } else {
-                            const scan_result = try lexer.scanIdentifierWithEscapes(.normal);
+                            const scan_result = try lexer.scanIdentifierWithEscapes(.normal, lexer.raw());
                             lexer.identifier = scan_result.contents;
                             lexer.token = scan_result.token;
                         }
@@ -1592,7 +1594,7 @@ fn NewLexer_(
                             }
                         }
 
-                        const scan_result = try lexer.scanIdentifierWithEscapes(.normal);
+                        const scan_result = try lexer.scanIdentifierWithEscapes(.normal, "");
                         lexer.identifier = scan_result.contents;
                         lexer.token = scan_result.token;
                     },
@@ -1614,7 +1616,7 @@ fn NewLexer_(
                                 lexer.step();
                             }
                             if (lexer.code_point == '\\') {
-                                const scan_result = try lexer.scanIdentifierWithEscapes(.normal);
+                                const scan_result = try lexer.scanIdentifierWithEscapes(.normal, lexer.raw());
                                 lexer.identifier = scan_result.contents;
                                 lexer.token = scan_result.token;
                             } else {
