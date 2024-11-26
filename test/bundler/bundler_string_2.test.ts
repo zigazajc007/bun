@@ -7,11 +7,12 @@ const REQUIRE_EXACT_ERROR_NAMES = true;
 // execute in bun & node, compare output
 const file_cont = readFileSync(import.meta.dirname + "/bundler_string_2.fixture.txt", "utf-8");
 
-const header_cont = new TextEncoder().encode(/*js*/ `
-  function print(msg) {
-    console.log(msg);
-  };
-`);
+const header_txt = /*js*/ `
+function print(msg) {
+  console.log(msg);
+};
+`;
+const header_cont = new TextEncoder().encode(header_txt);
 
 const tmpdir = tempDirWithFiles("bundler_string_2", {});
 console.log(tmpdir);
@@ -30,6 +31,7 @@ for (const testdef of file_cont.split("/*=")) {
   if (expectnone2 != null) throw new Error("bad test: " + tname);
   const req_eval = tname.includes("[c]");
   const req_todo = tname.includes("[todo]");
+  const req_json = tname.includes("[json]");
 
   if (terr != null && terr.trim().length < 7) terr = "[! terr.len must be > 7 !]";
   let tvalue: string | Uint8Array = tvalue_raw;
@@ -45,7 +47,23 @@ for (const testdef of file_cont.split("/*=")) {
   }
 
   const tpath = "_" + i + ".js";
-  await Bun.write(tmpdir + "/" + tpath, new Uint8Array([...header_cont, ...tvalue]));
+  if (req_json) {
+    const tpath_json = "_" + i + "_json.json";
+    await Bun.write(
+      tmpdir + "/" + tpath,
+      new Uint8Array([
+        ...new TextEncoder().encode(`
+          import json_res from "./${tpath_json}" with {type: "json"};
+          ${header_txt}
+          print(JSON.stringify(json_res));
+        `),
+      ]),
+    );
+    await Bun.write(tmpdir + "/" + tpath_json, tvalue);
+    console.log(tmpdir);
+  } else {
+    await Bun.write(tmpdir + "/" + tpath, new Uint8Array([...header_cont, ...tvalue]));
+  }
 
   const testcb = async () => {
     // result in node

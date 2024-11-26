@@ -422,7 +422,9 @@ fn NewLexer_(
                         }
                     },
                     else => |c| {
-                        if (c >= 0x80) {
+                        if (is_json and c < 0x20) {
+                            return lexer.addDefaultError("Unescaped control characters are not allowed in JSON");
+                        } else if (c >= 0x80) {
                             if (comptime is_json) lexer.is_ascii_only = false;
                             utf8_is_interesting = false;
                             // print codepoint to wtf-8 (interesting character searches for \xE2 and many codepoints start with that. it could even be an invalid
@@ -591,6 +593,7 @@ fn NewLexer_(
                     }
                     break :blk 0x0B;
                 },
+                '/' => '/', // allowed in json
                 //   - NonEscapeCharacter, NonOctalDecimalEscapeSequence
                 else => |char| blk: {
                     if (comptime is_json) {
@@ -1945,6 +1948,9 @@ fn NewLexer_(
         }
 
         pub fn toEString(lexer: *LexerType) !js_ast.E.String {
+            if (lexer.token != .t_no_substitution_template_literal and lexer.token != .t_template_head and lexer.token != .t_template_middle and lexer.token != .t_template_tail and lexer.token != .t_string_literal) {
+                return js_ast.E.String.init("");
+            }
             switch (lexer.string_literal_raw) {
                 .none => unreachable,
                 .failure => |f| return f.show(lexer),

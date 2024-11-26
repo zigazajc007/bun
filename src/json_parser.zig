@@ -279,9 +279,10 @@ fn JSONLikeParser_(
                         else
                             try p.lexer.toEString();
 
+                        try p.lexer.expect(.t_string_literal);
+
                         const key_range = p.lexer.range();
                         const key = newExpr(str, key_range.loc);
-                        try p.lexer.expect(.t_string_literal);
 
                         if (comptime opts.json_warn_duplicate_keys) {
                             const hash_key = str.hash();

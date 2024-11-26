@@ -104,3 +104,4 @@ de\u{2
 /*=[c] identifier with null byte 3c*+ :-: error: Expected " */`var abc\u{1} = "1"; print(abc\u{1});`
 /*=[c] identifier with null byte 4c*+ :-: error: Expected " */`print(abc\u{1});`
 /*= empty escape :-: malformed Unicode character escape sequence */print("\u{})
+/*=[c][json] null byte in file :-: SyntaxError: Failed to parse JSON */`"\x00"`
