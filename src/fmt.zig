@@ -218,7 +218,7 @@ const JSONFormatter = struct {
     input: []const u8,
 
     pub fn format(self: JSONFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .latin1);
+        try bun.js_printer.writeJSONString(.latin1, self.input, @TypeOf(writer), writer);
     }
 };
 
@@ -226,7 +226,7 @@ const JSONFormatterUTF8 = struct {
     input: []const u8,
 
     pub fn format(self: JSONFormatterUTF8, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
+        try bun.js_printer.writeJSONString(.wtf8_replace_invalid, self.input, @TypeOf(writer), writer);
     }
 };
 
@@ -620,7 +620,7 @@ pub fn githubActionWriter(writer: anytype, self: string) !void {
         if (strings.indexOfNewlineOrNonASCIIOrANSI(self, @as(u32, @truncate(offset)))) |i| {
             const byte = self[i];
             if (byte > 0x7F) {
-                offset += @max(strings.wtf8ByteSequenceLength(byte), 1);
+                offset += strings.unicode.decodeFirst(.wtf8_replace_invalid, self[i..]).?.advance;
                 continue;
             }
             if (i > 0) {
@@ -667,14 +667,7 @@ pub fn githubAction(self: string) strings.GithubActionFormatter {
 }
 
 pub fn quotedWriter(writer: anytype, self: string) !void {
-    const remain = self;
-    if (strings.containsNewlineOrNonASCIIOrQuote(remain)) {
-        try bun.js_printer.writeJSONString(self, @TypeOf(writer), writer, strings.Encoding.utf8);
-    } else {
-        try writer.writeAll("\"");
-        try writer.writeAll(self);
-        try writer.writeAll("\"");
-    }
+    try bun.js_printer.writeJSONString(.wtf8_replace_invalid, self, @TypeOf(writer), writer);
 }
 
 pub const QuotedFormatter = struct {

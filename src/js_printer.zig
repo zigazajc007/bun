@@ -170,20 +170,9 @@ pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, compt
     while (strings.indexOfNeedsEscape(remaining, quote_char)) |i| {
         len += i;
         remaining = remaining[i..];
-        const char_len = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
-        const c = strings.decodeWTF8RuneT(
-            &switch (char_len) {
-                // 0 is not returned by `wtf8ByteSequenceLengthWithInvalid`
-                1 => .{ remaining[0], 0, 0, 0 },
-                2 => remaining[0..2].* ++ .{ 0, 0 },
-                3 => remaining[0..3].* ++ .{0},
-                4 => remaining[0..4].*,
-                else => unreachable,
-            },
-            char_len,
-            i32,
-            0,
-        );
+        const dec_res = strings.unicode.decodeFirst(.wtf8_replace_invalid, remaining);
+        const c: i32 = if (dec_res) |v| v.codepoint else 0;
+        const char_len = if (dec_res) |v| v.advance else 0;
         if (canPrintWithoutEscape(i32, c, ascii_only)) {
             len += @as(usize, char_len);
         } else if (c <= 0xFFFF) {
@@ -205,114 +194,52 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
     return bytes;
 }
 
-pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
-    const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
-    var i: usize = 0;
-    const n: usize = text.len;
-    while (i < n) {
-        const width = switch (comptime encoding) {
-            .latin1, .ascii => 1,
-            .utf8 => strings.wtf8ByteSequenceLengthWithInvalid(text[i]),
-            .utf16 => 1,
-        };
-        const clamped_width = @min(@as(usize, width), n -| i);
-        const c = switch (encoding) {
-            .utf8 => strings.decodeWTF8RuneT(
-                &switch (clamped_width) {
-                    // 0 is not returned by `wtf8ByteSequenceLengthWithInvalid`
-                    1 => .{ text[i], 0, 0, 0 },
-                    2 => text[i..][0..2].* ++ .{ 0, 0 },
-                    3 => text[i..][0..3].* ++ .{0},
-                    4 => text[i..][0..4].*,
-                    else => unreachable,
-                },
-                width,
-                i32,
-                0,
-            ),
-            .ascii => brk: {
-                std.debug.assert(text[i] <= 0x7F);
-                break :brk text[i];
-            },
-            .latin1 => brk: {
-                if (text[i] <= 0x7F) break :brk text[i];
-                break :brk strings.latin1ToCodepointAssumeNotASCII(text[i], i32);
-            },
-            .utf16 => brk: {
-                // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
-                // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
-                // eg: "\u{10334}" will convert to "\uD800\uDF34" without this.
-                break :brk @as(i32, text[i]);
-            },
-        };
-        if (canPrintWithoutEscape(i32, c, ascii_only)) {
-            const remain = text[i + clamped_width ..];
+pub fn writePreQuotedString(comptime encoding: strings.unicode.Encoding, text_in: []const encoding.Unit(), comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool) !void {
+    if (Environment.allow_assert) bun.assert(strings.unicode.isValid(encoding, text_in));
+    var remainder = text_in;
 
-            switch (encoding) {
-                .ascii, .utf8 => {
-                    if (strings.indexOfNeedsEscape(remain, quote_char)) |j| {
-                        const text_chunk = text[i .. i + clamped_width];
-                        try writer.writeAll(text_chunk);
-                        i += clamped_width;
-                        try writer.writeAll(remain[0..j]);
-                        i += j;
-                    } else {
-                        try writer.writeAll(text[i..]);
-                        i = n;
-                        break;
-                    }
-                },
-                .latin1, .utf16 => {
-                    var codepoint_bytes: [4]u8 = undefined;
-                    const codepoint_len = strings.encodeWTF8Rune(codepoint_bytes[0..4], c);
-                    try writer.writeAll(codepoint_bytes[0..codepoint_len]);
-                    i += clamped_width;
-                },
+    while (remainder.len > 0) {
+        const dec_res = strings.unicode.decodeFirst(encoding, remainder).?;
+        remainder = remainder[dec_res.advance..];
+        const codepoint = dec_res.codepoint;
+
+        if (canPrintWithoutEscape(i32, codepoint, ascii_only)) {
+            // print the character
+            var codepoint_bytes: [4]u8 = undefined;
+            const codepoint_len = strings.unicode.encodeWtf8WithInvalid(&codepoint_bytes, codepoint);
+            try writer.writeAll(codepoint_bytes[0..codepoint_len]);
+
+            if (encoding.isWtf8Like()) {
+                if (strings.indexOfNeedsEscape(remainder, quote_char)) |j| {
+                    // indexOfNeedsEscape will stop on the first non-ascii, so invalid will be handled correctly
+                    try writer.writeAll(remainder[0..j]);
+                    remainder = remainder[j..];
+                }
             }
             continue;
         }
-        switch (c) {
-            0x07 => {
-                try writer.writeAll("\\x07");
-                i += 1;
-            },
-            0x08 => {
-                try writer.writeAll("\\b");
-                i += 1;
-            },
-            0x0C => {
-                try writer.writeAll("\\f");
-                i += 1;
-            },
+        switch (codepoint) {
+            0x07 => try writer.writeAll("\\x07"),
+            0x08 => try writer.writeAll("\\b"),
+            0x0C => try writer.writeAll("\\f"),
             '\n' => {
                 if (quote_char == '`') {
                     try writer.writeAll("\n");
                 } else {
                     try writer.writeAll("\\n");
                 }
-                i += 1;
             },
-            std.ascii.control_code.cr => {
-                try writer.writeAll("\\r");
-                i += 1;
-            },
+            std.ascii.control_code.cr => try writer.writeAll("\\r"),
             // \v
-            std.ascii.control_code.vt => {
-                try writer.writeAll("\\v");
-                i += 1;
-            },
+            std.ascii.control_code.vt => try writer.writeAll("\\v"),
             // "\\"
-            '\\' => {
-                try writer.writeAll("\\\\");
-                i += 1;
-            },
+            '\\' => try writer.writeAll("\\\\"),
             '"' => {
                 if (quote_char == '"') {
                     try writer.writeAll("\\\"");
                 } else {
                     try writer.writeAll("\"");
                 }
-                i += 1;
             },
             '\'' => {
                 if (quote_char == '\'') {
@@ -320,7 +247,6 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 } else {
                     try writer.writeAll("'");
                 }
-                i += 1;
             },
             '`' => {
                 if (quote_char == '`') {
@@ -328,12 +254,10 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 } else {
                     try writer.writeAll("`");
                 }
-                i += 1;
             },
             '$' => {
                 if (quote_char == '`') {
-                    const remain = text[i + clamped_width ..];
-                    if (remain.len > 0 and remain[0] == '{') {
+                    if (remainder.len > 0 and remainder[0] == '{') {
                         try writer.writeAll("\\$");
                     } else {
                         try writer.writeAll("$");
@@ -341,19 +265,16 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 } else {
                     try writer.writeAll("$");
                 }
-                i += 1;
             },
 
             '\t' => {
                 try writer.writeAll("\\t");
-                i += 1;
             },
 
             else => {
-                i += @as(usize, width);
-
-                if (c <= 0xFF and !json) {
-                    const k = @as(usize, @intCast(c));
+                if (!json and codepoint <= 0xFF) {
+                    // json does not support \xNN escapes, \uNNNN must be used instead
+                    const k: usize = codepoint;
 
                     try writer.writeAll(&[_]u8{
                         '\\',
@@ -361,8 +282,8 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                         hex_chars[(k >> 4) & 0xF],
                         hex_chars[k & 0xF],
                     });
-                } else if (c <= 0xFFFF) {
-                    const k = @as(usize, @intCast(c));
+                } else if (codepoint <= 0xFFFF) {
+                    const k: usize = codepoint;
 
                     try writer.writeAll(&[_]u8{
                         '\\',
@@ -372,29 +293,28 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                         hex_chars[(k >> 4) & 0xF],
                         hex_chars[k & 0xF],
                     });
-                } else {
-                    if (json) {
-                        const k = c - 0x10000;
-                        const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
-                        const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
+                } else if (json) {
+                    // json does not support \u{} escapes, \uHIGH\uLOW must be used instead
+                    const k: usize = codepoint - 0x10000;
+                    const lo: usize = first_high_surrogate + ((k >> 10) & 0x3FF);
+                    const hi: usize = first_low_surrogate + (k & 0x3FF);
 
-                        try writer.writeAll(&[_]u8{
-                            '\\',
-                            'u',
-                            hex_chars[lo >> 12],
-                            hex_chars[(lo >> 8) & 15],
-                            hex_chars[(lo >> 4) & 15],
-                            hex_chars[lo & 15],
-                            '\\',
-                            'u',
-                            hex_chars[hi >> 12],
-                            hex_chars[(hi >> 8) & 15],
-                            hex_chars[(hi >> 4) & 15],
-                            hex_chars[hi & 15],
-                        });
-                    } else {
-                        try writer.print("\\u{{{d}}}", .{c});
-                    }
+                    try writer.writeAll(&[_]u8{
+                        '\\',
+                        'u',
+                        hex_chars[lo >> 12],
+                        hex_chars[(lo >> 8) & 15],
+                        hex_chars[(lo >> 4) & 15],
+                        hex_chars[lo & 15],
+                        '\\',
+                        'u',
+                        hex_chars[hi >> 12],
+                        hex_chars[(hi >> 8) & 15],
+                        hex_chars[(hi >> 4) & 15],
+                        hex_chars[hi & 15],
+                    });
+                } else {
+                    try writer.print("\\u{{{X}}}", .{codepoint});
                 }
             },
         }
@@ -405,13 +325,13 @@ pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime asci
 
     try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
     try bytes.appendChar('"');
-    try writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, true, .utf8);
+    try writePreQuotedString(.wtf8_replace_invalid, text, @TypeOf(writer), writer, '"', ascii_only, true);
     bytes.appendChar('"') catch unreachable;
 }
 
-pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
+pub fn writeJSONString(comptime encoding: strings.unicode.Encoding, input: []const encoding.Unit(), comptime Writer: type, writer: Writer) !void {
     try writer.writeAll("\"");
-    try writePreQuotedString(input, Writer, writer, '"', false, true, encoding);
+    try writePreQuotedString(encoding, input, Writer, writer, '"', false, true);
     try writer.writeAll("\"");
 }
 
@@ -1584,9 +1504,9 @@ fn NewPrinter(
         pub fn printStringCharactersUTF8(e: *Printer, text: []const u8, quote: u8) void {
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', ascii_only, false, .utf8),
-                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, false, .utf8),
-                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', ascii_only, false, .utf8),
+                '\'' => writePreQuotedString(.wtf8_replace_invalid, text, @TypeOf(writer), writer, '\'', ascii_only, false),
+                '"' => writePreQuotedString(.wtf8_replace_invalid, text, @TypeOf(writer), writer, '"', ascii_only, false),
+                '`' => writePreQuotedString(.wtf8_replace_invalid, text, @TypeOf(writer), writer, '`', ascii_only, false),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
@@ -1595,9 +1515,9 @@ fn NewPrinter(
 
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', ascii_only, false, .utf16),
-                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', ascii_only, false, .utf16),
-                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', ascii_only, false, .utf16),
+                '\'' => writePreQuotedString(.wtf16, slice, @TypeOf(writer), writer, '\'', ascii_only, false),
+                '"' => writePreQuotedString(.wtf16, slice, @TypeOf(writer), writer, '"', ascii_only, false),
+                '`' => writePreQuotedString(.wtf16, slice, @TypeOf(writer), writer, '`', ascii_only, false),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }

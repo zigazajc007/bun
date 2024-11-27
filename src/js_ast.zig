@@ -2245,24 +2245,7 @@ pub const E = struct {
         /// while it is used by the E.String.
         pub fn init(contents_wtf8: []const u8) String {
             if (Environment.allow_assert) {
-                var i: usize = 0;
-                while (i < contents_wtf8.len) {
-                    const remaining = contents_wtf8[i..];
-                    const seq_len = strings.utf8ByteSequenceLength(remaining[0]);
-                    bun.assert(seq_len > 0);
-
-                    const arr: [4]u8 = switch (seq_len) {
-                        1 => .{ remaining[0], 0, 0, 0 },
-                        2 => remaining[0..2].* ++ .{ 0, 0 },
-                        3 => remaining[0..3].* ++ .{0},
-                        4 => remaining[0..4].*,
-                        else => unreachable,
-                    };
-                    const codepoint = strings.decodeWTF8RuneT(&arr, seq_len, i32, -1);
-                    bun.assert(codepoint >= 0);
-
-                    i += seq_len;
-                }
+                bun.assert(std.unicode.wtf8ValidateSlice(contents_wtf8));
             }
             return .{
                 .is_rope = false,
@@ -2296,16 +2279,16 @@ pub const E = struct {
             };
         }
 
-        fn concatCopyAndPairSurrogate(left: *String, right: *String, high: i32, low: i32, arena: std.mem.Allocator) !String {
+        fn concatCopyAndPairSurrogate(left: *String, right: *String, high: u21, low: u21, arena: std.mem.Allocator) !String {
             // https://simonsapin.github.io/wtf-8/#concatenating
             // this should be very rare
-            const codepoint: i32 = 0x10000 + ((high & 0x03ff) << 10) | (low & 0x03ff);
+            const codepoint: u21 = strings.unicode.combineLowAndHighSurrogateToCodepoint(low, high);
             const left_len = left.byteLength();
             const right_len = right.byteLength();
             const result_slice = try arena.alloc(u8, left_len + right_len - 2);
             left.copyToSliceWtf8(result_slice[0..left_len]);
             right.copyToSliceWtf8(result_slice[left_len - 2 ..]);
-            const codepoint_len = strings.encodeWTF8Rune(result_slice[left_len - 3 ..][0..4], codepoint);
+            const codepoint_len = std.unicode.wtf8Encode(codepoint, result_slice[left_len - 3 ..][0..4]) catch unreachable;
             bun.assert(codepoint_len == 4);
             return .{
                 .is_rope = false,
@@ -2314,30 +2297,29 @@ pub const E = struct {
             };
         }
 
-        const first_high_surrogate = 0xD800;
-        const last_high_surrogate = 0xDBFF;
-        const first_low_surrogate = 0xDC00;
-        const last_low_surrogate = 0xDFFF;
-        pub fn endsWithHighSurrogate(self: *const String) ?i32 {
-            // high: segment matches 11101101, 1010xxxx, 10xxxxxx
-            // low: segment matches 11101101, 1011xxxx, 10xxxxxx
-
+        pub fn endsWithHighSurrogate(self: *const String) ?u21 {
             const last = self._rope_segment_last orelse self;
             const slice = last._value_or_segment_value;
             if (slice.len < 3) return null;
-            const segment = slice[slice.len - 3 ..];
-            if (strings.wtf8ByteSequenceLengthWithInvalid(segment[0]) != 3) return null;
-            const decoded = strings.decodeWTF8RuneT(&.{ segment[0], segment[1], segment[2], 0 }, 3, i32, -1);
-            if (decoded >= first_high_surrogate and decoded <= last_high_surrogate) return decoded;
+            const segment = slice[slice.len - 3 ..][0..3];
+            if (strings.unicode.isWtf8HighSurrogate(segment)) {
+                const result = strings.unicode.decodeFirst(.wtf8_assert_no_invalid, segment).?;
+                bun.assert(result.advance == 3);
+                bun.assert(result.codepoint >= strings.unicode.first_high_surrogate and result.codepoint <= strings.unicode.last_high_surrogate);
+                return result.codepoint;
+            }
             return null;
         }
-        pub fn startsWithLowSurrogate(self: *const String) ?i32 {
+        pub fn startsWithLowSurrogate(self: *const String) ?u21 {
             const slice = self._value_or_segment_value;
             if (slice.len < 3) return null;
             const segment = slice[0..3];
-            if (strings.wtf8ByteSequenceLengthWithInvalid(segment[0]) != 3) return null;
-            const decoded = strings.decodeWTF8RuneT(&.{ segment[0], segment[1], segment[2], 0 }, 3, i32, -1);
-            if (decoded >= first_low_surrogate and decoded <= last_low_surrogate) return decoded;
+            if (strings.unicode.isWtf8LowSurrogate(segment)) {
+                const result = strings.unicode.decodeFirst(.wtf8_assert_no_invalid, segment).?;
+                bun.assert(result.advance == 3);
+                bun.assert(result.codepoint >= strings.unicode.first_low_surrogate and result.codepoint <= strings.unicode.last_low_surrogate);
+                return result.codepoint;
+            }
             return null;
         }
 

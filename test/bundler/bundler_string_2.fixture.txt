@@ -112,3 +112,4 @@ de\u{2
 /*=[c] source code is utf-8, not wtf-8 2 */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify("'), 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, ...new TextEncoder().encode('"))')])
 /*=[c] source code is utf-8, not wtf-8 3 */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify("'), 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, ...new TextEncoder().encode('"))')])
 /*=[no-node][no-eval] html comments are not implemented :-: Unsupported syntax: Legacy HTML comments not implemented yet! */<!-- hello
+/*= indexOfNeedsEscape 1 */print(JSON.stringify("abc\uD801efghi"))

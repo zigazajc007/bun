@@ -1397,8 +1397,9 @@ pub const LineOffsetTable = struct {
 
         var remaining = contents;
         while (remaining.len > 0) {
-            const len_ = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
-            const c = strings.decodeWTF8RuneT(remaining.ptr[0..4], len_, i32, 0);
+            const _result = strings.unicode.decodeFirst(.wtf8_replace_invalid, remaining).?;
+            const c: i32 = _result.codepoint;
+            const len_ = _result.advance;
             const cp_len = @as(usize, len_);
 
             if (column == 0) {
@@ -1795,8 +1796,9 @@ pub const Chunk = struct {
                 const n = @as(usize, @intCast(slice.len));
                 var c: i32 = 0;
                 while (i < n) {
-                    const len = strings.wtf8ByteSequenceLengthWithInvalid(slice[i]);
-                    c = strings.decodeWTF8RuneT(slice[i..].ptr[0..4], len, i32, strings.unicode_replacement);
+                    const dec_res = strings.unicode.decodeFirst(.wtf8_replace_invalid, slice[i..]).?;
+                    const len = dec_res.advance;
+                    c = dec_res.codepoint;
                     i += @as(usize, len);
 
                     switch (c) {

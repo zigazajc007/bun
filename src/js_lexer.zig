@@ -541,13 +541,12 @@ fn NewLexer_(
                         const low_half = result;
                         if (lexer.temp_buffer_u8.items.len < 3) break :blk2;
                         const last3 = lexer.temp_buffer_u8.items[lexer.temp_buffer_u8.items.len - 3 ..][0..3];
-                        const seq_len = strings.wtf8ByteSequenceLength(last3[0]);
-                        if (seq_len != 3) break :blk2;
-                        const high_half = strings.decodeWTF8RuneT(&.{ last3[0], last3[1], last3[2], 0 }, seq_len, i32, -1);
-                        if (high_half < first_high_surrogate or high_half > last_high_surrogate) break :blk2;
+                        const dec_res = strings.unicode.decodeFirst(.wtf8_replace_invalid, last3).?;
+                        if (dec_res.advance != 3) break :blk2;
+                        if (dec_res.codepoint < first_high_surrogate or dec_res.codepoint > last_high_surrogate) break :blk2;
                         // merge surrogate pair
                         lexer.temp_buffer_u8.items.len -= 3;
-                        result = 0x10000 + ((high_half & 0x03ff) << 10) | (low_half & 0x03ff);
+                        result = strings.unicode.combineLowAndHighSurrogateToCodepoint(@intCast(low_half), dec_res.codepoint);
                     }
 
                     // append codepoint
@@ -621,21 +620,9 @@ fn NewLexer_(
                 self._advanceByBytes(0);
                 return -1;
             }
-            const len = std.unicode.utf8ByteSequenceLength(self.source.contents[self.current]) catch {
-                self._advanceByBytes(1);
-                return strings.unicode_replacement;
-            };
-            if (rem.len < len) {
-                self._advanceByBytes(1);
-                return strings.unicode_replacement;
-            }
-            const bytes = rem[0..len];
-            const res = std.unicode.utf8Decode(bytes) catch {
-                self._advanceByBytes(1);
-                return strings.unicode_replacement;
-            };
-            self._advanceByBytes(bytes.len);
-            return res;
+            const res = strings.unicode.decodeFirst(.utf8_replace_invalid, rem).?;
+            self._advanceByBytes(res.advance);
+            return res.codepoint;
         }
 
         fn step(lexer: *LexerType) void {
