@@ -110,6 +110,17 @@ de\u{2
 /*=[c] bad unicode replaced properly 2 */new Uint8Array([...new TextEncoder().encode('print("'), 0xC0, 0xAF, ...new TextEncoder().encode('")')])
 /*=[c] source code is utf-8, not wtf-8 1 */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify("'), 0xED, 0xA0, 0x80, ...new TextEncoder().encode('"))')])
 /*=[c] source code is utf-8, not wtf-8 2 */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify("'), 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, ...new TextEncoder().encode('"))')])
-/*=[c] source code is utf-8, not wtf-8 3 */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify("'), 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, ...new TextEncoder().encode('"))')])
+/*=[c] source code is utf-8, not wtf-8 3 */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify(`'), 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, 0xED, 0xA0, 0x80, ...new TextEncoder().encode('`))')])
 /*=[no-node][no-eval] html comments are not implemented :-: Unsupported syntax: Legacy HTML comments not implemented yet! */<!-- hello
 /*= indexOfNeedsEscape 1 */print(JSON.stringify("abc\uD801efghi"))
+/*=[c] utf-8 quesiton mark count */new Uint8Array([...new TextEncoder().encode('print(JSON.stringify(`'), 
+  0b11110010,
+  0b10101100,
+  0b10110111,
+  0b10110111,
+  0b10110111,
+  0b10110111,
+  0b10110111,
+  0b10110111,
+  0b00101011,
+...new TextEncoder().encode('`))')])

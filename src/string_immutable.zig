@@ -4977,8 +4977,8 @@ pub const PackedCodepointIterator = struct {
             @setRuntimeSafety(false);
             cursor.* = Cursor{
                 .i = pos,
-                .c = codepoint,
-                .width = cp_len,
+                .c = @intCast(codepoint),
+                .width = @intCast(cp_len),
             };
         }
 
@@ -5102,8 +5102,8 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
 
             cursor.* = Cursor{
                 .i = pos,
-                .c = codepoint,
-                .width = cp_len,
+                .c = @intCast(codepoint),
+                .width = @intCast(cp_len),
             };
 
             return true;
@@ -6217,7 +6217,7 @@ pub const visible = struct {
 
             const dec_res = bun.strings.unicode.decodeFirst(.wtf8_replace_invalid, this_chunk).?;
             const cp = dec_res.codepoint;
-            len += visibleCodepointWidth(cp, false);
+            len += visibleCodepointWidth(@intCast(cp), false);
 
             bytes = bytes[@min(i + dec_res.advance, bytes.len)..];
         }
@@ -6486,70 +6486,129 @@ pub const unicode = struct {
     pub const last_high_surrogate = 0xDBFF;
     pub const first_low_surrogate = 0xDC00;
     pub const last_low_surrogate = 0xDFFF;
-    pub fn combineLowAndHighSurrogateToCodepoint(low: u21, high: u21) u21 {
+    pub fn combineLowAndHighSurrogateToCodepoint(low: i32, high: i32) i32 {
         bun.assert(low >= first_low_surrogate and low <= last_low_surrogate and high >= first_high_surrogate and high <= last_high_surrogate);
         return 0x10000 + ((high & 0x03ff) << 10) | (low & 0x03ff);
     }
 
-    pub fn encodeWtf8WithInvalid(buf: *[4]u8, codepoint: u21) usize {
-        return std.unicode.wtf8Encode(codepoint, buf) catch {
+    pub fn encodeWtf8WithInvalid(buf: *[4]u8, codepoint: i32) usize {
+        return std.unicode.wtf8Encode(@intCast(codepoint), buf) catch {
             @memcpy(buf[0..strings.unicode_replacement_str.len], &strings.unicode_replacement_str);
             return strings.unicode_replacement_str.len;
         };
     }
 
-    const DecodeResult = struct { codepoint: u21, advance: u3 };
-    fn _advance1ReturnReplacement(comptime encoding: unicode.Encoding) DecodeResult {
-        if (encoding.isAssert()) unreachable;
+    pub const DecodeResult = struct { codepoint: i32, advance: u32 };
+    /// Returns null if slice.len == 0
+    /// Decodes the first codepoint from a string in the given encoding. If the encoding
+    /// is _replace_invalid, 0xFFFD is returned for an invalid sequence and advance is 1.
+    pub inline fn decodeFirst(comptime encoding: unicode.Encoding, slice: []const encoding.Unit()) ?DecodeResult {
+        // inline is used because it improves performance by 1.7x in ReleaseFast (~5.607 ms / 10mb -> ~3.298ms / 10mb)
+        if (slice.len == 0) return null;
+        const s0 = slice[0];
+        failure: {
+            switch (encoding) {
+                .ascii_assert_no_invalid => {
+                    if (s0 >= 0x80) break :failure;
+                    return .{ .codepoint = s0, .advance = 1 };
+                },
+                .latin1 => {
+                    if (s0 < 0x80) return .{ .codepoint = s0, .advance = 1 };
+                    return .{ .codepoint = latin1ToCodepointAssumeNotASCII(s0, i32), .advance = 1 };
+                },
+                .utf8_assert_no_invalid, .utf8_replace_invalid, .wtf8_assert_no_invalid, .wtf8_replace_invalid => {
+                    const T = i32;
+                    const len: u3 = switch (s0) {
+                        0b0000_0000...0b0111_1111 => return .{ .codepoint = s0, .advance = 1 },
+                        0b1100_0000...0b1101_1111 => 2,
+                        0b1110_0000...0b1110_1111 => 3,
+                        0b1111_0000...0b1111_0111 => 4,
+                        else => {
+                            if (encoding.isAssert()) unreachable;
+                            break :failure;
+                        },
+                    };
+                    if (len > slice.len) {
+                        if (encoding.isAssert()) unreachable;
+                        // this means (0b11110)(0b10)(0b10)(0b0) will read as (?)(?)(?)(ascii)
+                        // alternatively, here we could read the actual number of trail bytes like TextDecoder does
+                        // to convert to (?)(ascii), two fewer 0xFFFD bytes
+                        break :failure;
+                        // and below, rather than break :failure, we can return .advance = (number of trail bytes read)
+                        // this would not match node
+                    }
+
+                    const s1 = slice[1];
+                    if ((s1 & 0xC0) != 0x80) {
+                        if (encoding.isAssert()) unreachable;
+                        break :failure;
+                    }
+                    if (len == 2) {
+                        const cp = @as(T, s0 & 0x1F) << 6 | @as(T, s1 & 0x3F);
+                        if (cp < 0x80) {
+                            if (encoding.isAssert()) unreachable;
+                            break :failure;
+                        }
+                        return .{ .codepoint = cp, .advance = 2 };
+                    }
+
+                    const s2 = slice[2];
+                    if ((s2 & 0xC0) != 0x80) {
+                        if (encoding.isAssert()) unreachable;
+                        break :failure;
+                    }
+                    if (len == 3) {
+                        const cp = (@as(T, s0 & 0x0F) << 12) | (@as(T, s1 & 0x3F) << 6) | (@as(T, s2 & 0x3F));
+                        if (cp < 0x800) {
+                            if (encoding.isAssert()) unreachable;
+                            break :failure;
+                        }
+                        if (!encoding.isWtf8()) {
+                            if (cp >= first_high_surrogate and cp <= last_high_surrogate or cp >= first_low_surrogate and cp <= last_low_surrogate) {
+                                if (encoding.isAssert()) unreachable;
+                                break :failure;
+                            }
+                        }
+                        return .{ .codepoint = cp, .advance = 3 };
+                    }
+
+                    const s3 = slice[3];
+                    if ((s3 & 0xC0) != 0x80) {
+                        if (encoding.isAssert()) unreachable;
+                        break :failure;
+                    }
+                    {
+                        const cp = (@as(T, s0 & 0x07) << 18) | (@as(T, s1 & 0x3F) << 12) | (@as(T, s2 & 0x3F) << 6) | (@as(T, s3 & 0x3F));
+                        if (cp < 0x10000 or cp > 0x10FFFF) {
+                            if (encoding.isAssert()) unreachable;
+                            break :failure;
+                        }
+                        return .{ .codepoint = cp, .advance = 4 };
+                    }
+
+                    unreachable;
+                },
+                .utf16_assert_no_invalid, .utf16_replace_invalid, .wtf16 => {
+                    if (encoding.isUtf16() and s0 >= first_low_surrogate and s0 <= last_low_surrogate) break :failure;
+                    if (s0 >= first_high_surrogate and s0 <= last_high_surrogate) {
+                        // try to pair
+                        if (slice.len > 1) {
+                            const trail = slice[1];
+                            if (trail >= first_low_surrogate and trail <= last_low_surrogate) {
+                                // pair success
+                                return .{ .codepoint = combineLowAndHighSurrogateToCodepoint(trail, s0), .advance = 2 };
+                            }
+                        }
+                        // pair failure
+                        if (encoding.isUtf16()) break :failure;
+                    }
+                    return .{ .codepoint = s0, .advance = 1 };
+                },
+            }
+        }
         return .{ .codepoint = unicode_replacement, .advance = 1 };
     }
 
-    /// Decodes the first codepoint from a string in the given encoding. If the encoding
-    /// is _replace_invalid, 0xFFFD is returned for an invalid sequence and advance is 1.
-    /// Only returns null if slice.len == 0
-    pub fn decodeFirst(comptime encoding: unicode.Encoding, slice: []const encoding.Unit()) ?DecodeResult {
-        if (slice.len == 0) return null;
-        const lead = slice[0];
-        switch (encoding) {
-            .ascii_assert_no_invalid => {
-                if (lead >= 0x80) return _advance1ReturnReplacement(encoding);
-                return .{ .codepoint = lead, .advance = 1 };
-            },
-            .latin1 => {
-                if (lead < 0x80) return .{ .codepoint = lead, .advance = 1 };
-                return .{ .codepoint = latin1ToCodepointAssumeNotASCII(lead, u21), .advance = 1 };
-            },
-            .utf8_assert_no_invalid, .utf8_replace_invalid, .wtf8_assert_no_invalid, .wtf8_replace_invalid => {
-                const len = std.unicode.utf8ByteSequenceLength(lead) catch return _advance1ReturnReplacement(encoding);
-                if (slice.len < len) return _advance1ReturnReplacement(encoding);
-                const full = slice[0..len];
-                const result = switch (encoding.isWtf8()) {
-                    true => std.unicode.wtf8Decode(full),
-                    false => std.unicode.utf8Decode(full),
-                } catch return _advance1ReturnReplacement(encoding);
-                // if (encoding.isWtf8() and len == 3 and slice.len >= 6 and isWtf8LowSurrogate(slice[3..6])) {
-                //     return _advance1ReturnReplacement(encoding);
-                // }
-                return .{ .codepoint = result, .advance = len };
-            },
-            .utf16_assert_no_invalid, .utf16_replace_invalid, .wtf16 => {
-                if (encoding.isUtf16() and lead >= first_low_surrogate and lead <= last_low_surrogate) return _advance1ReturnReplacement(encoding);
-                if (lead >= first_high_surrogate and lead <= last_high_surrogate) {
-                    // try to pair
-                    if (slice.len > 1) {
-                        const trail = slice[1];
-                        if (trail >= first_low_surrogate and trail <= last_low_surrogate) {
-                            // pair success
-                            return .{ .codepoint = combineLowAndHighSurrogateToCodepoint(trail, lead), .advance = 2 };
-                        }
-                    }
-                    // pair failure
-                    if (encoding.isUtf16()) return _advance1ReturnReplacement(encoding);
-                }
-                return .{ .codepoint = lead, .advance = 1 };
-            },
-        }
-    }
     pub fn isValid(comptime encoding: unicode.Encoding, slice: []const encoding.Unit()) bool {
         return switch (encoding) {
             .ascii_assert_no_invalid => isAllASCII(slice),
@@ -6580,7 +6639,7 @@ pub const unicode = struct {
                 self.i += self.width;
                 self.width = 0;
                 const dec_res = decodeFirst(encoding, self.str[self.i..]) orelse return false;
-                self.width += dec_res.advance;
+                self.width = @intCast(dec_res.advance);
                 self.c = dec_res.codepoint;
                 return true;
             }

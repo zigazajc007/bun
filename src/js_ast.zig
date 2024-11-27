@@ -2279,16 +2279,16 @@ pub const E = struct {
             };
         }
 
-        fn concatCopyAndPairSurrogate(left: *String, right: *String, high: u21, low: u21, arena: std.mem.Allocator) !String {
+        fn concatCopyAndPairSurrogate(left: *String, right: *String, high: i32, low: i32, arena: std.mem.Allocator) !String {
             // https://simonsapin.github.io/wtf-8/#concatenating
             // this should be very rare
-            const codepoint: u21 = strings.unicode.combineLowAndHighSurrogateToCodepoint(low, high);
+            const codepoint: i32 = strings.unicode.combineLowAndHighSurrogateToCodepoint(low, high);
             const left_len = left.byteLength();
             const right_len = right.byteLength();
             const result_slice = try arena.alloc(u8, left_len + right_len - 2);
             left.copyToSliceWtf8(result_slice[0..left_len]);
             right.copyToSliceWtf8(result_slice[left_len - 2 ..]);
-            const codepoint_len = std.unicode.wtf8Encode(codepoint, result_slice[left_len - 3 ..][0..4]) catch unreachable;
+            const codepoint_len = strings.unicode.encodeWtf8WithInvalid(result_slice[left_len - 3 ..][0..4], codepoint);
             bun.assert(codepoint_len == 4);
             return .{
                 .is_rope = false,
@@ -2297,7 +2297,7 @@ pub const E = struct {
             };
         }
 
-        pub fn endsWithHighSurrogate(self: *const String) ?u21 {
+        pub fn endsWithHighSurrogate(self: *const String) ?i32 {
             const last = self._rope_segment_last orelse self;
             const slice = last._value_or_segment_value;
             if (slice.len < 3) return null;
@@ -2310,7 +2310,7 @@ pub const E = struct {
             }
             return null;
         }
-        pub fn startsWithLowSurrogate(self: *const String) ?u21 {
+        pub fn startsWithLowSurrogate(self: *const String) ?i32 {
             const slice = self._value_or_segment_value;
             if (slice.len < 3) return null;
             const segment = slice[0..3];

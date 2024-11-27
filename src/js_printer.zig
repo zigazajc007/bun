@@ -274,7 +274,7 @@ pub fn writePreQuotedString(comptime encoding: strings.unicode.Encoding, text_in
             else => {
                 if (!json and codepoint <= 0xFF) {
                     // json does not support \xNN escapes, \uNNNN must be used instead
-                    const k: usize = codepoint;
+                    const k: usize = @intCast(codepoint);
 
                     try writer.writeAll(&[_]u8{
                         '\\',
@@ -283,7 +283,7 @@ pub fn writePreQuotedString(comptime encoding: strings.unicode.Encoding, text_in
                         hex_chars[k & 0xF],
                     });
                 } else if (codepoint <= 0xFFFF) {
-                    const k: usize = codepoint;
+                    const k: usize = @intCast(codepoint);
 
                     try writer.writeAll(&[_]u8{
                         '\\',
@@ -295,7 +295,7 @@ pub fn writePreQuotedString(comptime encoding: strings.unicode.Encoding, text_in
                     });
                 } else if (json) {
                     // json does not support \u{} escapes, \uHIGH\uLOW must be used instead
-                    const k: usize = codepoint - 0x10000;
+                    const k: usize = @intCast(codepoint - 0x10000);
                     const lo: usize = first_high_surrogate + ((k >> 10) & 0x3FF);
                     const hi: usize = first_low_surrogate + (k & 0x3FF);
 

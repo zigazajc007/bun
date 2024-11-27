@@ -5298,7 +5298,7 @@ const Tokenizer = struct {
         const dec_res = bun.strings.unicode.decodeFirst(.wtf8_replace_invalid, this.src[this.position..]) orelse {
             return bun.strings.unicode_replacement; // ?
         };
-        return dec_res.codepoint;
+        return @intCast(dec_res.codepoint);
     }
 
     pub inline fn nextByteUnchecked(this: *Tokenizer) u8 {
