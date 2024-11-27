@@ -6563,4 +6563,27 @@ pub const unicode = struct {
             .wtf16 => true,
         };
     }
+
+    pub fn codepointIterator(comptime encoding: unicode.Encoding, slice: []const encoding.Unit()) unicode.CodepointIterator(encoding) {
+        if (Environment.allow_assert) bun.assert(isValid(encoding, slice));
+        return .{ .str = slice, .i = 0, .c = -2, .width = 0 };
+    }
+    pub fn CodepointIterator(comptime encoding: unicode.Encoding) type {
+        return struct {
+            const Iterator = @This();
+            str: []const encoding.Unit(),
+            i: usize,
+            width: u3,
+            c: i32,
+
+            pub fn next(self: *Iterator) bool {
+                self.i += self.width;
+                self.width = 0;
+                const dec_res = decodeFirst(encoding, self.str[self.i..]) orelse return false;
+                self.width += dec_res.advance;
+                self.c = dec_res.codepoint;
+                return true;
+            }
+        };
+    }
 };

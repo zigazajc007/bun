@@ -549,26 +549,25 @@ pub fn fmtIdentifier(name: string) FormatValidIdentifier {
 pub const FormatValidIdentifier = struct {
     name: string,
     pub fn format(self: FormatValidIdentifier, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        var iterator = strings.CodepointIterator.init(self.name);
-        var cursor = strings.CodepointIterator.Cursor{};
+        var it2 = strings.unicode.codepointIterator(.wtf8_replace_invalid, self.name);
 
         var has_needed_gap = false;
         var needs_gap = false;
         var start_i: usize = 0;
 
-        if (!iterator.next(&cursor)) {
+        if (!it2.next()) {
             try writer.writeAll("_");
             return;
         }
 
         // Common case: no gap necessary. No allocation necessary.
-        needs_gap = !js_lexer.isIdentifierStart(cursor.c);
+        needs_gap = !js_lexer.isIdentifierStart(it2.c);
         if (!needs_gap) {
             // Are there any non-alphanumeric chars at all?
-            while (iterator.next(&cursor)) {
-                if (!js_lexer.isIdentifierContinue(cursor.c) or cursor.width > 1) {
+            while (it2.next()) {
+                if (!js_lexer.isIdentifierContinue(it2.c) or it2.c >= 0x80) {
                     needs_gap = true;
-                    start_i = cursor.i;
+                    start_i = it2.i;
                     break;
                 }
             }
@@ -578,17 +577,16 @@ pub const FormatValidIdentifier = struct {
             needs_gap = false;
             if (start_i > 0) try writer.writeAll(self.name[0..start_i]);
             var slice = self.name[start_i..];
-            iterator = strings.CodepointIterator.init(slice);
-            cursor = strings.CodepointIterator.Cursor{};
+            it2 = strings.unicode.codepointIterator(.wtf8_replace_invalid, slice);
 
-            while (iterator.next(&cursor)) {
-                if (js_lexer.isIdentifierContinue(cursor.c) and cursor.width == 1) {
+            while (it2.next()) {
+                if (js_lexer.isIdentifierContinue(it2.c) and it2.c < 0x80) {
                     if (needs_gap) {
                         try writer.writeAll("_");
                         needs_gap = false;
                         has_needed_gap = true;
                     }
-                    try writer.writeAll(slice[cursor.i .. cursor.i + @as(u32, cursor.width)]);
+                    try writer.writeAll(slice[it2.i .. it2.i + @as(u32, it2.width)]);
                 } else if (!needs_gap) {
                     needs_gap = true;
                     // skip the code point, replace it with a single _
