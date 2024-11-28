@@ -433,17 +433,9 @@ comptime {
     const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
     @export(Bun__Process__send, .{ .name = "Bun__Process__send" });
 }
-pub fn Bun__Process__send_(
-    globalObject: *JSGlobalObject,
-    callFrame: *JSC.CallFrame,
-) bun.JSError!JSC.JSValue {
+pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     JSC.markBinding(@src());
-    var message, var handle, var options_, var callback = callFrame.arguments_old(4).ptr;
-
-    if (message == .zero) message = .undefined;
-    if (handle == .zero) handle = .undefined;
-    if (options_ == .zero) options_ = .undefined;
-    if (callback == .zero) callback = .undefined;
+    var message, var handle, var options_, var callback = callFrame.argumentsAsArray(4);
 
     if (handle.isFunction()) {
         callback = handle;
@@ -453,7 +445,7 @@ pub fn Bun__Process__send_(
         callback = options_;
         options_ = .undefined;
     } else if (!options_.isUndefined()) {
-        if (!globalObject.validateObject("options", options_, .{})) return .zero;
+        try globalObject.validateObject("options", options_, .{});
     }
 
     const S = struct {
@@ -1560,7 +1552,8 @@ pub const VirtualMachine = struct {
         script_execution_context_id: u32 = 0,
         next_debugger_id: u64 = 1,
         poll_ref: Async.KeepAlive = .{},
-        wait_for_connection: bool = false,
+        wait_for_connection: Wait = .off,
+        // wait_for_connection: bool = false,
         set_breakpoint_on_first_line: bool = false,
         mode: enum {
             /// Bun acts as the server. https://debug.bun.sh/ uses this
@@ -1572,6 +1565,8 @@ pub const VirtualMachine = struct {
         test_reporter_agent: TestReporterAgent = .{},
         lifecycle_reporter_agent: LifecycleAgent = .{},
         must_block_until_connected: bool = false,
+
+        pub const Wait = enum { off, shortly, forever };
 
         pub const log = Output.scoped(.debugger, false);
 
@@ -1597,11 +1592,24 @@ pub const VirtualMachine = struct {
                     .duration_ns = @truncate(@as(u128, @intCast(std.time.nanoTimestamp() - bun.CLI.start_time))),
                 }});
 
-            Bun__ensureDebugger(debugger.script_execution_context_id, debugger.wait_for_connection);
-            while (debugger.wait_for_connection) {
+            Bun__ensureDebugger(debugger.script_execution_context_id, debugger.wait_for_connection != .off);
+            var deadline: bun.timespec = if (debugger.wait_for_connection == .shortly) bun.timespec.now().addMs(30) else undefined;
+
+            while (debugger.wait_for_connection != .off) {
                 this.eventLoop().tick();
-                if (debugger.wait_for_connection)
-                    this.eventLoop().autoTickActive();
+                switch (debugger.wait_for_connection) {
+                    .forever => {
+                        this.eventLoop().autoTickActive();
+                    },
+                    .shortly => {
+                        this.uwsLoop().tickWithTimeout(&deadline);
+                        if (bun.timespec.now().order(&deadline) != .lt) {
+                            log("Timed out waiting for the debugger", .{});
+                            break;
+                        }
+                    },
+                    .off => {},
+                }
             }
         }
 
@@ -1624,7 +1632,7 @@ pub const VirtualMachine = struct {
                 }
                 this.eventLoop().ensureWaker();
 
-                if (debugger.wait_for_connection) {
+                if (debugger.wait_for_connection != .off) {
                     debugger.poll_ref.ref(this);
                     debugger.must_block_until_connected = true;
                 }
@@ -1654,8 +1662,8 @@ pub const VirtualMachine = struct {
 
         pub export fn Debugger__didConnect() void {
             var this = VirtualMachine.get();
-            if (this.debugger.?.wait_for_connection) {
-                this.debugger.?.wait_for_connection = false;
+            if (this.debugger.?.wait_for_connection != .off) {
+                this.debugger.?.wait_for_connection = .off;
                 this.debugger.?.poll_ref.unref(this);
             }
         }
@@ -1997,10 +2005,18 @@ pub const VirtualMachine = struct {
         if (bun.getenvZ("HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET") != null) {
             return;
         }
-        const notify = bun.getenvZ("BUN_INSPECT_NOTIFY") orelse "";
+
         const unix = bun.getenvZ("BUN_INSPECT") orelse "";
-        const set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1");
-        const wait_for_connection = set_breakpoint_on_first_line or (unix.len > 0 and strings.endsWith(unix, "?wait=1"));
+        const notify = bun.getenvZ("BUN_INSPECT_NOTIFY") orelse "";
+        const connect_to = bun.getenvZ("BUN_INSPECT_CONNECT_TO") orelse "";
+
+        const set_breakpoint_on_first_line = unix.len > 0 and strings.endsWith(unix, "?break=1"); // If we should set a breakpoint on the first line
+        const wait_for_debugger = unix.len > 0 and strings.endsWith(unix, "?wait=1"); // If we should wait for the debugger to connect before starting the event loop
+
+        const wait_for_connection: Debugger.Wait = switch (set_breakpoint_on_first_line or wait_for_debugger) {
+            true => if (notify.len > 0 or connect_to.len > 0) .shortly else .forever,
+            false => .off,
+        };
 
         switch (cli_flag) {
             .unspecified => {
@@ -2015,7 +2031,17 @@ pub const VirtualMachine = struct {
                     this.debugger = Debugger{
                         .path_or_port = null,
                         .from_environment_variable = notify,
-                        .wait_for_connection = true,
+                        .wait_for_connection = wait_for_connection,
+                        .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
+                        .mode = .connect,
+                    };
+                } else if (connect_to.len > 0) {
+                    // This works in the vscode debug terminal because that relies on unix or notify being set, which they
+                    // are in the debug terminal. This branch doesn't reach
+                    this.debugger = Debugger{
+                        .path_or_port = null,
+                        .from_environment_variable = connect_to,
+                        .wait_for_connection = wait_for_connection,
                         .set_breakpoint_on_first_line = set_breakpoint_on_first_line,
                         .mode = .connect,
                     };
@@ -2025,7 +2051,7 @@ pub const VirtualMachine = struct {
                 this.debugger = Debugger{
                     .path_or_port = cli_flag.enable.path_or_port,
                     .from_environment_variable = unix,
-                    .wait_for_connection = wait_for_connection or cli_flag.enable.wait_for_connection,
+                    .wait_for_connection = if (cli_flag.enable.wait_for_connection) .forever else wait_for_connection,
                     .set_breakpoint_on_first_line = set_breakpoint_on_first_line or cli_flag.enable.set_breakpoint_on_first_line,
                 };
             },
@@ -4361,16 +4387,13 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 };
             }
 
-            pub fn append(this: *HotReloadTask, path: []const u8, id: u32) void {
+            pub fn append(this: *HotReloadTask, id: u32) void {
                 if (this.count == 8) {
                     this.enqueue();
                     this.count = 0;
                 }
 
                 this.hashes[this.count] = id;
-                // TODO(@paperdave/bake): this allocation is terrible and must be removed
-                if (Ctx == bun.bake.DevServer)
-                    this.paths[this.count] = default_allocator.dupe(u8, path) catch bun.outOfMemory();
                 this.count += 1;
             }
 
@@ -4565,7 +4588,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                             debug("File changed: {s}", .{fs.relativeTo(file_path)});
 
                         if (event.op.write or event.op.delete or event.op.rename) {
-                            current_task.append(file_path, current_hash);
+                            current_task.append(current_hash);
                         }
 
                         // TODO: delete events?
@@ -4653,7 +4676,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                                 if (hash == file_hash) {
                                                     if (file_descriptors[entry_id] != .zero) {
                                                         if (prev_entry_id != entry_id) {
-                                                            current_task.append(file_paths[entry_id], hashes[entry_id]);
+                                                            current_task.append(hashes[entry_id]);
                                                             ctx.removeAtIndex(
                                                                 @as(u16, @truncate(entry_id)),
                                                                 0,
