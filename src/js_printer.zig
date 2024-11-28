@@ -164,28 +164,9 @@ fn ws(comptime str: []const u8) Whitespacer {
 }
 
 pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, comptime quote_char: u8) usize {
-    var remaining = input;
-    var len: usize = 2; // for quotes
-
-    while (strings.indexOfNeedsEscape(remaining, quote_char)) |i| {
-        len += i;
-        remaining = remaining[i..];
-        const dec_res = strings.unicode.decodeFirst(.wtf8_replace_invalid, remaining);
-        const c: i32 = if (dec_res) |v| v.codepoint else 0;
-        const char_len = if (dec_res) |v| v.advance else 0;
-        if (canPrintWithoutEscape(i32, c, ascii_only)) {
-            len += @as(usize, char_len);
-        } else if (c <= 0xFFFF) {
-            len += 6;
-        } else {
-            len += 12;
-        }
-        remaining = remaining[char_len..];
-    } else {
-        return remaining.len + 2;
-    }
-
-    return len;
+    _ = ascii_only;
+    _ = quote_char;
+    return input.len + 10;
 }
 
 pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_only: bool) !MutableString {
@@ -194,31 +175,40 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
     return bytes;
 }
 
-pub fn writePreQuotedString(comptime encoding: strings.unicode.Encoding, text_in: []const encoding.Unit(), comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool) !void {
-    if (Environment.allow_assert) bun.assert(strings.unicode.isValid(encoding, text_in));
-    var remainder = text_in;
+pub fn writePreQuotedString(comptime encoding: strings.unicode.Encoding, text: []const encoding.Unit(), comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool) !void {
+    if (Environment.allow_assert) bun.assert(strings.unicode.isValid(encoding, text));
 
-    while (remainder.len > 0) {
-        const dec_res = strings.unicode.decodeFirst(encoding, remainder).?;
-        remainder = remainder[dec_res.advance..];
-        const codepoint = dec_res.codepoint;
-
-        if (canPrintWithoutEscape(i32, codepoint, ascii_only)) {
-            // print the character
-            var codepoint_bytes: [4]u8 = undefined;
-            const codepoint_len = strings.unicode.encodeWtf8WithInvalid(&codepoint_bytes, codepoint);
-            try writer.writeAll(codepoint_bytes[0..codepoint_len]);
-
-            if (encoding.isWtf8Like()) {
-                if (strings.indexOfNeedsEscape(remainder, quote_char)) |j| {
-                    // indexOfNeedsEscape will stop on the first non-ascii, so invalid will be handled correctly
-                    try writer.writeAll(remainder[0..j]);
-                    remainder = remainder[j..];
-                }
+    var i: usize = 0;
+    while (i < text.len) {
+        // fast advance
+        if (encoding.isWtf8Like() or encoding == .latin1) {
+            const next_interesting = js_lexer.indexOfInterestingCharacterInString(text[i..], quote_char, true) orelse text[i..].len;
+            if (next_interesting != 0) {
+                const segment = text[i..][0..next_interesting];
+                try writer.writeAll(segment);
+                i += next_interesting;
+                if (i == text.len) break;
+                bun.assert(i < text.len);
             }
+        }
+
+        const dec_res = strings.unicode.decodeFirst(encoding, text[i..]).?;
+        i += dec_res.advance;
+
+        if (canPrintWithoutEscape(i32, dec_res.codepoint, ascii_only)) {
+            // print the character
+            if (dec_res.codepoint < 0x80) {
+                try writer.writeByte(@intCast(dec_res.codepoint));
+            } else {
+                var codepoint_bytes: [4]u8 = undefined;
+                const codepoint_len = strings.encodeWTF8Rune(codepoint_bytes[0..4], dec_res.codepoint);
+                try writer.writeAll(codepoint_bytes[0..codepoint_len]);
+            }
+
             continue;
         }
-        switch (codepoint) {
+
+        switch (dec_res.codepoint) {
             0x07 => try writer.writeAll("\\x07"),
             0x08 => try writer.writeAll("\\b"),
             0x0C => try writer.writeAll("\\f"),
@@ -257,7 +247,7 @@ pub fn writePreQuotedString(comptime encoding: strings.unicode.Encoding, text_in
             },
             '$' => {
                 if (quote_char == '`') {
-                    if (remainder.len > 0 and remainder[0] == '{') {
+                    if (text[i..].len > 0 and text[i] == '{') {
                         try writer.writeAll("\\$");
                     } else {
                         try writer.writeAll("$");
@@ -267,14 +257,12 @@ pub fn writePreQuotedString(comptime encoding: strings.unicode.Encoding, text_in
                 }
             },
 
-            '\t' => {
-                try writer.writeAll("\\t");
-            },
+            '\t' => try writer.writeAll("\\t"),
 
             else => {
-                if (!json and codepoint <= 0xFF) {
+                if (!json and dec_res.codepoint <= 0xFF) {
                     // json does not support \xNN escapes, \uNNNN must be used instead
-                    const k: usize = @intCast(codepoint);
+                    const k: usize = @intCast(dec_res.codepoint);
 
                     try writer.writeAll(&[_]u8{
                         '\\',
@@ -282,8 +270,8 @@ pub fn writePreQuotedString(comptime encoding: strings.unicode.Encoding, text_in
                         hex_chars[(k >> 4) & 0xF],
                         hex_chars[k & 0xF],
                     });
-                } else if (codepoint <= 0xFFFF) {
-                    const k: usize = @intCast(codepoint);
+                } else if (dec_res.codepoint <= 0xFFFF) {
+                    const k: usize = @intCast(dec_res.codepoint);
 
                     try writer.writeAll(&[_]u8{
                         '\\',
@@ -293,9 +281,9 @@ pub fn writePreQuotedString(comptime encoding: strings.unicode.Encoding, text_in
                         hex_chars[(k >> 4) & 0xF],
                         hex_chars[k & 0xF],
                     });
-                } else if (json) {
+                } else if (json and true) {
                     // json does not support \u{} escapes, \uHIGH\uLOW must be used instead
-                    const k: usize = @intCast(codepoint - 0x10000);
+                    const k: usize = @intCast(dec_res.codepoint - 0x10000);
                     const lo: usize = first_high_surrogate + ((k >> 10) & 0x3FF);
                     const hi: usize = first_low_surrogate + (k & 0x3FF);
 
@@ -314,7 +302,8 @@ pub fn writePreQuotedString(comptime encoding: strings.unicode.Encoding, text_in
                         hex_chars[hi & 15],
                     });
                 } else {
-                    try writer.print("\\u{{{X}}}", .{codepoint});
+                    // TODO re-enable
+                    try writer.print("\\u{{{X}}}", .{dec_res.codepoint});
                 }
             },
         }

@@ -608,13 +608,13 @@ fn NewLexer_(
             lexer.string_literal_raw = res;
         }
 
-        fn _advanceByBytes(self: *LexerType, bytes: usize) void {
+        inline fn _advanceByBytes(self: *LexerType, bytes: usize) void {
             self.end = self.current;
             self.current += bytes;
         }
 
         /// -1 for eof, 0xFFFD for invalid utf-8
-        fn nextCodepoint(self: *LexerType) CodePoint {
+        inline fn nextCodepoint(self: *LexerType) CodePoint {
             const rem = self.source.contents[self.current..];
             if (rem.len == 0) {
                 self._advanceByBytes(0);
@@ -3222,7 +3222,7 @@ fn nonVectorIndexOfInterestingCharacterInString(text: []const u8, comptime quote
     }
     return null;
 }
-fn indexOfInterestingCharacterInString(text_: []const u8, comptime quote: u8, comptime utf8_is_interesting: bool) ?usize {
+pub fn indexOfInterestingCharacterInString(text_: []const u8, comptime quote: u8, comptime utf8_is_interesting: bool) ?usize {
     var text = text_;
     if (Environment.isNative and text.len > 128) {
         const vec_quote: strings.AsciiVector = @splat(quote);

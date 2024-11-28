@@ -1207,7 +1207,7 @@ const Pattern = struct {
                 &source,
                 Logger.Loc.Empty,
                 allocator,
-                "Route name must be plaintext",
+                "Route name must be ascii only",
                 .{},
             ) catch unreachable;
             return null;

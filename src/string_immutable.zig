@@ -4156,52 +4156,6 @@ pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, compt
     return null;
 }
 
-pub fn indexOfNeedsEscape(slice: []const u8, comptime quote_char: u8) ?u32 {
-    var remaining = slice;
-    if (remaining.len == 0)
-        return null;
-
-    if (remaining[0] >= 127 or remaining[0] < 0x20 or remaining[0] == '\\' or remaining[0] == quote_char or (quote_char == '`' and remaining[0] == '$')) {
-        return 0;
-    }
-
-    if (comptime Environment.enableSIMD) {
-        while (remaining.len >= ascii_vector_size) {
-            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
-            const cmp: AsciiVectorU1 = if (comptime quote_char == '`') ( //
-                @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, quote_char))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '$'))))) //
-            ) else ( //
-                @as(AsciiVectorU1, @bitCast((vec > max_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, '\\'))))) |
-                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(@as(u8, quote_char))))) //
-            );
-
-            if (@reduce(.Max, cmp) > 0) {
-                const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
-                const first = @ctz(bitmask);
-
-                return @as(u32, first) + @as(u32, @truncate(@intFromPtr(remaining.ptr) - @intFromPtr(slice.ptr)));
-            }
-
-            remaining = remaining[ascii_vector_size..];
-        }
-    }
-
-    for (remaining) |*char_| {
-        const char = char_.*;
-        if (char > 127 or char < 0x20 or char == '\\' or char == quote_char or (quote_char == '`' and char == '$')) {
-            return @as(u32, @truncate(@intFromPtr(char_) - @intFromPtr(slice.ptr)));
-        }
-    }
-
-    return null;
-}
-
 pub fn indexOfCharZ(sliceZ: [:0]const u8, char: u8) ?u63 {
     const ptr = bun.C.strchr(sliceZ.ptr, char) orelse return null;
     const pos = @intFromPtr(ptr) - @intFromPtr(sliceZ.ptr);
@@ -4723,50 +4677,6 @@ pub fn @"nextUTF16NonASCIIOr$`\\"(
     return null;
 }
 
-// /// Encode Type into UTF-8 bytes.
-// /// - Invalid unicode data becomes U+FFFD REPLACEMENT CHARACTER.
-// /// -
-// pub fn encodeUTF8RuneT(out: *[4]u8, comptime R: type, c: R) u3 {
-//     switch (c) {
-//         0b0000_0000...0b0111_1111 => {
-//             out[0] = @intCast(u8, c);
-//             return 1;
-//         },
-//         0b1100_0000...0b1101_1111 => {
-//             out[0] = @truncate(u8, 0b11000000 | (c >> 6));
-//             out[1] = @truncate(u8, 0b10000000 | c & 0b111111);
-//             return 2;
-//         },
-
-//         0b1110_0000...0b1110_1111 => {
-//             if (0xd800 <= c and c <= 0xdfff) {
-//                 // Replacement character
-//                 out[0..3].* = [_]u8{ 0xEF, 0xBF, 0xBD };
-
-//                 return 3;
-//             }
-
-//             out[0] = @truncate(u8, 0b11100000 | (c >> 12));
-//             out[1] = @truncate(u8, 0b10000000 | (c >> 6) & 0b111111);
-//             out[2] = @truncate(u8, 0b10000000 | c & 0b111111);
-//             return 3;
-//         },
-//         0b1111_0000...0b1111_0111 => {
-//             out[0] = @truncate(u8, 0b11110000 | (c >> 18));
-//             out[1] = @truncate(u8, 0b10000000 | (c >> 12) & 0b111111);
-//             out[2] = @truncate(u8, 0b10000000 | (c >> 6) & 0b111111);
-//             out[3] = @truncate(u8, 0b10000000 | c & 0b111111);
-//             return 4;
-//         },
-//         else => {
-//             // Replacement character
-//             out[0..3].* = [_]u8{ 0xEF, 0xBF, 0xBD };
-
-//             return 3;
-//         },
-//     }
-// }
-
 pub fn containsNonBmpCodePoint(text: string) bool {
     var iter = CodepointIterator.init(text);
     var curs = CodepointIterator.Cursor{};
@@ -5000,20 +4910,6 @@ pub const PackedCodepointIterator = struct {
         return slice;
     }
 
-    pub fn needsUTF8Decoding(slice: string) bool {
-        var it = Iterator{ .bytes = slice, .i = 0 };
-
-        while (true) {
-            const part = it.nextCodepointSlice();
-            @setRuntimeSafety(false);
-            switch (part.len) {
-                0 => return false,
-                1 => continue,
-                else => return true,
-            }
-        }
-    }
-
     pub fn scanUntilQuotedValueOrEOF(iter: *Iterator, comptime quote: CodePointType) usize {
         while (iter.c > -1) {
             if (!switch (iter.nextCodepoint()) {
@@ -5157,21 +5053,6 @@ pub fn NewCodePointIterator(comptime CodePointType: type, comptime zeroValue: co
 
             return it.c;
         }
-
-        // /// Look ahead at the next n codepoints without advancing the iterator.
-        // /// If fewer than n codepoints are available, then return the remainder of the string.
-        // pub fn peek(it: *Iterator, n: usize) []const u8 {
-        //     const original_i = it.i;
-        //     defer it.i = original_i;
-
-        //     var end_ix = original_i;
-        //     for (0..n) |_| {
-        //         const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..];
-        //         end_ix += next_codepoint.len;
-        //     }
-
-        //     return it.bytes[original_i..end_ix];
-        // }
     };
 }
 

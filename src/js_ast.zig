@@ -2245,7 +2245,7 @@ pub const E = struct {
         /// while it is used by the E.String.
         pub fn init(contents_wtf8: []const u8) String {
             if (Environment.allow_assert) {
-                bun.assert(std.unicode.wtf8ValidateSlice(contents_wtf8));
+                bun.assert(std.unicode.wtf8ValidateSlice(contents_wtf8)); // does not error for paired surrogate halves
             }
             return .{
                 .is_rope = false,
