@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { readFileSync } from "fs";
 import { bunExe, isWindows, tempDirWithFiles } from "harness";
+import stripAnsi from "strip-ansi";
 
 const REQUIRE_EXACT_ERROR_NAMES = true;
 
@@ -102,7 +103,7 @@ for (const testdef of file_cont.split("/*=")) {
       if (tdecoded != null) expect(evalres).toBeInstanceOf(Error);
       const bunerrored = bunres.stderr?.toString("utf-8");
       expect(bunerrored).not.toInclude("panic");
-      if (REQUIRE_EXACT_ERROR_NAMES) expect(bunerrored).toInclude(terr.trim());
+      if (REQUIRE_EXACT_ERROR_NAMES) expect(stripAnsi(bunerrored ?? "undefined")).toInclude(terr.trim());
     }
   };
   test.todoIf(req_todo)(tname, testcb);
