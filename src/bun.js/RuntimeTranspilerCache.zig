@@ -8,8 +8,8 @@
 /// Version 9: String printing changes
 /// Version 10: Constant folding for ''.charCodeAt(n)
 /// Version 11: Fix \uFFFF printing regression
-/// Version 12: Constant folding fix for `("0" + "1") == 0` and other changes
-const expected_version = 11;
+/// Version 12: Constant folding fix for `("0" + "1") == 0`, "\uD835\uDD04" to "\u{1D504}", and other changes
+const expected_version = 12;
 
 const bun = @import("root").bun;
 const std = @import("std");
