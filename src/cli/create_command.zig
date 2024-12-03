@@ -79,7 +79,7 @@ const UnsupportedPackages = struct {
     pub fn update(this: *UnsupportedPackages, expr: js_ast.Expr) void {
         for (expr.data.e_object.properties.slice()) |prop| {
             inline for (comptime std.meta.fieldNames(UnsupportedPackages)) |field_name| {
-                if (strings.eqlComptime(prop.key.?.data.e_string.asWtf8JSON(), comptime field_name)) {
+                if (strings.eqlComptime(prop.key.?.data.e_string.asWtf8AssertNotRope(), comptime field_name)) {
                     @field(this, field_name) = true;
                 }
             }
@@ -762,7 +762,7 @@ pub const CreateCommand = struct {
                 //         var i: usize = 0;
                 //         var out_i: usize = 0;
                 //         while (i < list.len) : (i += 1) {
-                //             const key = list[i].key.?.data.e_string.asWtf8JSON();
+                //             const key = list[i].key.?.data.e_string.asWtf8AssertNotRope();
 
                 //             const do_prune = packages.has(key);
                 //             prune_count += @as(u16, @intCast(@intFromBool(do_prune)));
@@ -1327,7 +1327,7 @@ pub const CreateCommand = struct {
                                 var script_property_out_i: usize = 0;
 
                                 while (script_property_i < scripts_properties.len) : (script_property_i += 1) {
-                                    const script = scripts_properties[script_property_i].value.?.data.e_string.asWtf8JSON();
+                                    const script = scripts_properties[script_property_i].value.?.data.e_string.asWtf8AssertNotRope();
 
                                     if (strings.contains(script, "react-scripts start") or
                                         strings.contains(script, "next dev") or
@@ -2223,14 +2223,14 @@ pub const Example = struct {
 
                 var list = try ctx.allocator.alloc(Example, count);
                 for (q.expr.data.e_object.properties.slice(), 0..) |property, i| {
-                    const name = property.key.?.data.e_string.asWtf8JSON();
+                    const name = property.key.?.data.e_string.asWtf8AssertNotRope();
                     list[i] = Example{
                         .name = if (std.mem.indexOfScalar(u8, name, '/')) |slash|
                             name[slash + 1 ..]
                         else
                             name,
-                        .version = property.value.?.asProperty("version").?.expr.data.e_string.asWtf8JSON(),
-                        .description = property.value.?.asProperty("description").?.expr.data.e_string.asWtf8JSON(),
+                        .version = property.value.?.asProperty("version").?.expr.data.e_string.asWtf8AssertNotRope(),
+                        .description = property.value.?.asProperty("description").?.expr.data.e_string.asWtf8AssertNotRope(),
                     };
                 }
                 return list;

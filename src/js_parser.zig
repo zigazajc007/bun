@@ -11702,7 +11702,7 @@ fn NewParser_(
 
                 // Parse the name
                 if (p.lexer.token == .t_string_literal) {
-                    value.name = (try p.lexer.toUTF8EString()).asWtf8JSON();
+                    value.name = try p.lexer.toWTF8();
                     needs_symbol = js_lexer.isIdentifier(value.name);
                 } else if (p.lexer.isIdentifierOrKeyword()) {
                     value.name = p.lexer.identifier;
@@ -12051,10 +12051,10 @@ fn NewParser_(
         }
 
         pub fn parsePath(p: *P) !ParsedPath {
-            const path_text = try p.lexer.toUTF8EString();
+            const path_text = try p.lexer.toWTF8();
             var path = ParsedPath{
                 .loc = p.lexer.loc(),
-                .text = path_text.asWtf8JSON(),
+                .text = path_text,
                 .is_macro = false,
                 .import_tag = .none,
             };
@@ -12094,7 +12094,7 @@ fn NewParser_(
                                 }
                             }
                         } else if (p.lexer.token == .t_string_literal) {
-                            const string_literal_text = (try p.lexer.toUTF8EString()).asWtf8JSON();
+                            const string_literal_text = try p.lexer.toWTF8();
                             inline for (comptime std.enums.values(SupportedAttribute)) |t| {
                                 if (strings.eqlComptime(string_literal_text, @tagName(t))) {
                                     break :brk t;
@@ -12110,8 +12110,9 @@ fn NewParser_(
                     try p.lexer.next();
                     try p.lexer.expect(.t_colon);
 
+                    const string_literal_text = try p.lexer.toWTF8();
                     try p.lexer.expect(.t_string_literal);
-                    const string_literal_text = (try p.lexer.toUTF8EString()).asWtf8JSON();
+
                     if (supported_attribute) |attr| {
                         switch (attr) {
                             .type => {

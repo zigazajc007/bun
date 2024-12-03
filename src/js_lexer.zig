@@ -1946,7 +1946,7 @@ fn NewLexer_(
 
         pub fn toEString(lexer: *LexerType) !js_ast.E.String {
             if (lexer.token != .t_no_substitution_template_literal and lexer.token != .t_template_head and lexer.token != .t_template_middle and lexer.token != .t_template_tail and lexer.token != .t_string_literal) {
-                return js_ast.E.String.init("");
+                return lexer.addDefaultError("Expected string");
             }
             switch (lexer.string_literal_raw) {
                 .none => unreachable,
@@ -1955,8 +1955,8 @@ fn NewLexer_(
             }
         }
 
-        pub fn toUTF8EString(lexer: *LexerType) !js_ast.E.String {
-            return lexer.toEString();
+        pub fn toWTF8(lexer: *LexerType) ![]const u8 {
+            return (try lexer.toEString()).asWtf8AssertNotRope();
         }
 
         inline fn assertNotJSON(_: *const LexerType) void {

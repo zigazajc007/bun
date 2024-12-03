@@ -8262,7 +8262,7 @@ pub const PackageManager = struct {
                                     else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
                                 };
                             } else {
-                                break :uninitialized e_string.asWtf8JSON();
+                                break :uninitialized e_string.asWtf8AssertNotRope();
                             }
                         });
 

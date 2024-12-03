@@ -1525,7 +1525,7 @@ pub const E = struct {
 
         const Sorter = struct {
             pub fn isLessThan(ctx: void, lhs: Expr, rhs: Expr) bool {
-                return strings.cmpStringsAsc(ctx, lhs.data.e_string.asWtf8JSON(), rhs.data.e_string.asWtf8JSON());
+                return strings.cmpStringsAsc(ctx, lhs.data.e_string.asWtf8AssertNotRope(), rhs.data.e_string.asWtf8AssertNotRope());
             }
         };
     };
@@ -2190,17 +2190,17 @@ pub const E = struct {
                     var rhs_key_size: u8 = @intFromEnum(Fields.__fake);
 
                     if (lhs.key != null and lhs.key.?.data == .e_string) {
-                        lhs_key_size = @intFromEnum(Map.get(lhs.key.?.data.e_string.asWtf8JSON()) orelse Fields.__fake);
+                        lhs_key_size = @intFromEnum(Map.get(lhs.key.?.data.e_string.asWtf8AssertNotRope()) orelse Fields.__fake);
                     }
 
                     if (rhs.key != null and rhs.key.?.data == .e_string) {
-                        rhs_key_size = @intFromEnum(Map.get(rhs.key.?.data.e_string.asWtf8JSON()) orelse Fields.__fake);
+                        rhs_key_size = @intFromEnum(Map.get(rhs.key.?.data.e_string.asWtf8AssertNotRope()) orelse Fields.__fake);
                     }
 
                     return switch (std.math.order(lhs_key_size, rhs_key_size)) {
                         .lt => true,
                         .gt => false,
-                        .eq => strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.asWtf8JSON(), rhs.key.?.data.e_string.asWtf8JSON()),
+                        .eq => strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.asWtf8AssertNotRope(), rhs.key.?.data.e_string.asWtf8AssertNotRope()),
                     };
                 }
             };
@@ -2208,7 +2208,7 @@ pub const E = struct {
 
         const Sorter = struct {
             pub fn isLessThan(ctx: void, lhs: G.Property, rhs: G.Property) bool {
-                return strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.asWtf8JSON(), rhs.key.?.data.e_string.asWtf8JSON());
+                return strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.asWtf8AssertNotRope(), rhs.key.?.data.e_string.asWtf8AssertNotRope());
             }
         };
     };
@@ -2225,7 +2225,7 @@ pub const E = struct {
         is_from_template_string: bool = false,
 
         /// for all strings. either contains the whole string, or the first segment if it is part of a rope.
-        /// prefer .asWtf8JSON() or .toWtf8MayAlloc() over accessing this directly.
+        /// prefer .asWtf8AssertNotRope() or .toWtf8MayAlloc() over accessing this directly.
         _value_or_segment_value: []const u8,
         /// prefer .isAllAscii(). always defined for ropes.
         _is_ascii_only: ?bool = null,
@@ -2406,7 +2406,7 @@ pub const E = struct {
         }
 
         /// For E.String s which are from the JSON parser. Asserts the string is not a rope string.
-        pub fn asWtf8JSON(self: *const String) []const u8 {
+        pub fn asWtf8AssertNotRope(self: *const String) []const u8 {
             bun.assert(!self.is_rope);
             return self._value_or_segment_value;
         }
@@ -3299,7 +3299,7 @@ pub const Expr = struct {
             if (prop.value == null) continue;
             const key = prop.key orelse continue;
             if (std.meta.activeTag(key.data) != .e_string) continue;
-            const key_str = key.data.e_string.asWtf8JSON();
+            const key_str = key.data.e_string.asWtf8AssertNotRope();
             if (strings.eqlAnyComptime(key_str, names)) return true;
         }
 
@@ -3481,7 +3481,7 @@ pub const Expr = struct {
     }
 
     pub inline fn asUtf8StringLiteral(expr: *const Expr) ?string {
-        if (expr.data == .e_string) return expr.data.e_string.asWtf8JSON();
+        if (expr.data == .e_string) return expr.data.e_string.asWtf8AssertNotRope();
         return null;
     }
 

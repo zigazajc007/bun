@@ -2613,7 +2613,7 @@ pub const OverrideMap = struct {
                 continue;
             }
 
-            const version_str = value.data.e_string.asWtf8JSON();
+            const version_str = value.data.e_string.asWtf8AssertNotRope();
             if (strings.hasPrefixComptime(version_str, "patch:")) {
                 // TODO(dylan-conway): apply .patch files to packages
                 try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"resolutions\"", .{});
@@ -5057,7 +5057,7 @@ pub const Package = extern struct {
                             package.bin = .{
                                 .tag = .file,
                                 .value = .{
-                                    .file = string_builder.append(String, stri.asWtf8JSON()),
+                                    .file = string_builder.append(String, stri.asWtf8AssertNotRope()),
                                 },
                             };
                             break :bin;

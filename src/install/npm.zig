@@ -1773,7 +1773,7 @@ pub const PackageManifest = struct {
                                 }
                             },
                             .e_string => |stri| {
-                                cpu.apply(stri.asWtf8JSON());
+                                cpu.apply(stri.asWtf8AssertNotRope());
                             },
                             else => {},
                         }
@@ -1795,7 +1795,7 @@ pub const PackageManifest = struct {
                                 }
                             },
                             .e_string => |stri| {
-                                os.apply(stri.asWtf8JSON());
+                                os.apply(stri.asWtf8AssertNotRope());
                             },
                             else => {},
                         }
@@ -1817,7 +1817,7 @@ pub const PackageManifest = struct {
                                 }
                             },
                             .e_string => |stri| {
-                                libc_.apply(stri.asWtf8JSON());
+                                libc_.apply(stri.asWtf8AssertNotRope());
                             },
                             else => {},
                         }
@@ -1914,7 +1914,7 @@ pub const PackageManifest = struct {
                                         package_version.bin = .{
                                             .tag = .file,
                                             .value = .{
-                                                .file = string_builder.append(String, stri.asWtf8JSON()),
+                                                .file = string_builder.append(String, stri.asWtf8AssertNotRope()),
                                             },
                                         };
                                         break :bin;

@@ -523,7 +523,7 @@ pub fn migrateNPMLockfile(
 
                     for (cpu_array.data.e_array.items.slice()) |item| {
                         if (item.data != .e_string) return error.InvalidNPMLockfile;
-                        arch.apply(item.data.e_string.asWtf8JSON());
+                        arch.apply(item.data.e_string.asWtf8AssertNotRope());
                     }
                     break :arch arch.combine();
                 } else .all,
@@ -537,7 +537,7 @@ pub fn migrateNPMLockfile(
 
                     for (cpu_array.data.e_array.items.slice()) |item| {
                         if (item.data != .e_string) return error.InvalidNPMLockfile;
-                        os.apply(item.data.e_string.asWtf8JSON());
+                        os.apply(item.data.e_string.asWtf8AssertNotRope());
                     }
                     break :arch os.combine();
                 } else .all,

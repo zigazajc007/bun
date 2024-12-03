@@ -583,7 +583,7 @@ pub const PackageJSON = struct {
                     continue;
                 }
 
-                const remap_value_str = remap_value.data.e_string.asWtf8JSON();
+                const remap_value_str = remap_value.data.e_string.asWtf8AssertNotRope();
 
                 map.putAssumeCapacityNoClobber(import_name, remap_value_str);
             }
@@ -642,7 +642,7 @@ pub const PackageJSON = struct {
         var json_source = logger.Source.initPathString(key_path.text, entry.contents);
         json_source.path.pretty = r.prettyPath(json_source.path);
 
-        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, json_source, allocator, true) catch |err| {
+        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, json_source, allocator) catch |err| {
             if (Environment.isDebug) {
                 Output.printError("{s}: JSON parse error: {s}", .{ package_json_path, @errorName(err) });
             }

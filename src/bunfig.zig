@@ -70,7 +70,7 @@ pub const Bunfig = struct {
         }
 
         fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
-            const url = URL.parse(str.asWtf8JSON());
+            const url = URL.parse(str.asWtf8AssertNotRope());
             var registry = std.mem.zeroes(Api.NpmRegistry);
 
             // Token
@@ -858,7 +858,7 @@ pub const Bunfig = struct {
                 });
             }
             return err;
-        } else JSONParser.parseTSConfig(&source, ctx.log, allocator, true) catch |err| {
+        } else JSONParser.parseTSConfig(&source, ctx.log, allocator) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 try ctx.log.addErrorOpts("Failed to parse", .{
                     .source = &source,

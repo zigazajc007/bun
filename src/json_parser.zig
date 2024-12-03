@@ -169,7 +169,7 @@ fn JSONLikeParser_(
 
         const Parser = @This();
 
-        pub fn parseExpr(p: *Parser, comptime maybe_auto_quote: bool, comptime force_utf8: bool) anyerror!Expr {
+        pub fn parseExpr(p: *Parser, comptime maybe_auto_quote: bool) anyerror!Expr {
             const loc = p.lexer.loc();
 
             switch (p.lexer.token) {
@@ -225,7 +225,7 @@ fn JSONLikeParser_(
                             }
                         }
 
-                        exprs.append(try p.parseExpr(false, force_utf8)) catch unreachable;
+                        exprs.append(try p.parseExpr(false)) catch unreachable;
                     }
 
                     if (p.lexer.has_newline_before) {
@@ -274,10 +274,7 @@ fn JSONLikeParser_(
                             }
                         }
 
-                        const str = if (comptime force_utf8)
-                            try p.lexer.toUTF8EString()
-                        else
-                            try p.lexer.toEString();
+                        const str = try p.lexer.toEString();
 
                         try p.lexer.expect(.t_string_literal);
 
@@ -291,12 +288,12 @@ fn JSONLikeParser_(
 
                             // Warn about duplicate keys
                             if (duplicate_get_or_put.found_existing) {
-                                p.log.addRangeWarningFmt(p.source(), key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{str.asWtf8JSON()}) catch unreachable;
+                                p.log.addRangeWarningFmt(p.source(), key_range, p.allocator, "Duplicate key \"{s}\" in object literal", .{str.asWtf8AssertNotRope()}) catch unreachable;
                             }
                         }
 
                         try p.lexer.expect(.t_colon);
-                        const value = try p.parseExpr(false, force_utf8);
+                        const value = try p.parseExpr(false);
                         properties.append(G.Property{
                             .key = key,
                             .value = value,
@@ -319,7 +316,7 @@ fn JSONLikeParser_(
                     if (comptime maybe_auto_quote) {
                         p.lexer = try Lexer.initJSON(p.log, p.source().*, p.allocator);
                         try p.lexer.parseStringLiteral(0);
-                        return p.parseExpr(false, force_utf8);
+                        return p.parseExpr(false);
                     }
 
                     try p.lexer.unexpected();
@@ -473,22 +470,22 @@ pub const PackageJSONVersionChecker = struct {
                         // if you have multiple "name" fields in the package.json....
                         // first one wins
                         if (key.data == .e_string and value.data == .e_string) {
-                            if (!p.has_found_name and strings.eqlComptime(key.data.e_string.asWtf8JSON(), "name")) {
+                            if (!p.has_found_name and strings.eqlComptime(key.data.e_string.asWtf8AssertNotRope(), "name")) {
                                 const len = @min(
-                                    value.data.e_string.asWtf8JSON().len,
+                                    value.data.e_string.asWtf8AssertNotRope().len,
                                     p.found_name_buf.len,
                                 );
 
-                                bun.copy(u8, &p.found_name_buf, value.data.e_string.asWtf8JSON()[0..len]);
+                                bun.copy(u8, &p.found_name_buf, value.data.e_string.asWtf8AssertNotRope()[0..len]);
                                 p.found_name = p.found_name_buf[0..len];
                                 p.has_found_name = true;
                                 p.name_loc = value.loc;
-                            } else if (!p.has_found_version and strings.eqlComptime(key.data.e_string.asWtf8JSON(), "version")) {
+                            } else if (!p.has_found_version and strings.eqlComptime(key.data.e_string.asWtf8AssertNotRope(), "version")) {
                                 const len = @min(
-                                    value.data.e_string.asWtf8JSON().len,
+                                    value.data.e_string.asWtf8AssertNotRope().len,
                                     p.found_version_buf.len,
                                 );
-                                bun.copy(u8, &p.found_version_buf, value.data.e_string.asWtf8JSON()[0..len]);
+                                bun.copy(u8, &p.found_version_buf, value.data.e_string.asWtf8AssertNotRope()[0..len]);
                                 p.found_version = p.found_version_buf[0..len];
                                 p.has_found_version = true;
                             }
@@ -707,7 +704,6 @@ pub fn parse(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,
-    comptime force_utf8: bool,
 ) !Expr {
     var parser = try JSONParser.init(allocator, source.*, log);
     switch (source.contents.len) {
@@ -728,7 +724,7 @@ pub fn parse(
         else => {},
     }
 
-    return try parser.parseExpr(false, force_utf8);
+    return try parser.parseExpr(false);
 }
 
 /// Parse Package JSON
@@ -768,7 +764,7 @@ pub fn parsePackageJSONUTF8(
     }).init(allocator, source.*, log);
     bun.assert(parser.source().contents.len > 0);
 
-    return try parser.parseExpr(false, true);
+    return try parser.parseExpr(false);
 }
 
 pub fn parsePackageJSONUTF8AlwaysDecode(
@@ -803,7 +799,7 @@ pub fn parsePackageJSONUTF8AlwaysDecode(
     }).init(allocator, source.*, log);
     bun.assert(parser.source().contents.len > 0);
 
-    return try parser.parseExpr(false, true);
+    return try parser.parseExpr(false);
 }
 
 const JsonResult = struct {
@@ -842,7 +838,7 @@ pub fn parsePackageJSONUTF8WithOpts(
     var parser = try JSONLikeParser(opts).init(allocator, source.*, log);
     bun.assert(parser.source().contents.len > 0);
 
-    const root = try parser.parseExpr(false, true);
+    const root = try parser.parseExpr(false);
 
     return .{
         .root = root,
@@ -892,7 +888,7 @@ pub fn parseUTF8Impl(
     var parser = try JSONParser.init(allocator, source.*, log);
     bun.assert(parser.source().contents.len > 0);
 
-    const result = try parser.parseExpr(false, true);
+    const result = try parser.parseExpr(false);
     if (comptime check_len) {
         if (parser.lexer.end >= source.contents.len) return result;
         try parser.lexer.unexpected();
@@ -921,7 +917,7 @@ pub fn parseForMacro(source: *const logger.Source, log: *logger.Log, allocator: 
 
     var parser = try JSONParserForMacro.init(allocator, source.*, log);
 
-    return try parser.parseExpr(false, false);
+    return try parser.parseExpr(false);
 }
 
 pub const JSONParseResult = struct {
@@ -987,7 +983,7 @@ pub fn parseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: s
 
     switch (source.contents[0]) {
         '{', '[', '0'...'9', '"', '\'' => {
-            return try parser.parseExpr(false, false);
+            return try parser.parseExpr(false);
         },
         else => {
             switch (parser.lexer.token) {
@@ -1005,17 +1001,17 @@ pub fn parseEnvJSON(source: *const logger.Source, log: *logger.Log, allocator: s
                         return Expr{ .loc = logger.Loc{ .start = 0 }, .data = .{ .e_undefined = E.Undefined{} } };
                     }
 
-                    return try parser.parseExpr(true, false);
+                    return try parser.parseExpr(true);
                 },
                 else => {
-                    return try parser.parseExpr(true, false);
+                    return try parser.parseExpr(true);
                 },
             }
         },
     }
 }
 
-pub fn parseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator, comptime force_utf8: bool) !Expr {
+pub fn parseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled
         0 => {
@@ -1036,7 +1032,7 @@ pub fn parseTSConfig(source: *const logger.Source, log: *logger.Log, allocator: 
 
     var parser = try TSConfigParser.init(allocator, source.*, log);
 
-    return parser.parseExpr(false, force_utf8);
+    return parser.parseExpr(false);
 }
 
 const duplicateKeyJson = "{ \"name\": \"valid\", \"name\": \"invalid\" }";

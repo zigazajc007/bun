@@ -635,7 +635,7 @@ pub const ToStringFormatter = struct {
             .e_object => try writer.print("[Object object]", .{}),
             .e_boolean => try writer.print("{s}", .{if (this.d.e_boolean.value) "true" else "false"}),
             .e_number => try writer.print("{d}", .{this.d.e_number.value}),
-            .e_string => try writer.print("{s}", .{this.d.e_string.asWtf8JSON()}),
+            .e_string => try writer.print("{s}", .{this.d.e_string.asWtf8AssertNotRope()}),
             .e_null => try writer.print("null", .{}),
 
             else => |tag| if (bun.Environment.isDebug) {
