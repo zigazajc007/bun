@@ -314,7 +314,7 @@ fn JSONLikeParser_(
                 },
                 else => {
                     if (comptime maybe_auto_quote) {
-                        p.lexer = try Lexer.initJSON(p.log, p.source().*, p.allocator);
+                        p.lexer = try Lexer.initToParseSingleUnquotedString(p.log, p.source().*, p.allocator);
                         try p.lexer.parseStringLiteral(0);
                         return p.parseExpr(false);
                     }

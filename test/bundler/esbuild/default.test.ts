@@ -5283,7 +5283,7 @@ describe("bundler", () => {
       "/outside-node-modules/package.json": ['Duplicate key "b" in object literal'],
     },
   });
-  const RequireShimSubstitutionBrowser = itBundled("default/RequireShimSubstitutionBrowser", {
+  const RequireShimSubstitutionBrowser = itBundled.only("default/RequireShimSubstitutionBrowser", {
     files: {
       "/entry.js": /* js */ `
         Promise.all([

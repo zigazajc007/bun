@@ -352,9 +352,9 @@ fn NewLexer_(
                 // LS and PS are allowed
                 const interesting_character_idx = switch (utf8_is_interesting) {
                     inline else => |v| indexOfInterestingCharacterInString(remainder, quote, v),
-                } orelse {
+                } orelse blk: {
                     // no interesting character between now and end of file; that means the ending quote is missing
-                    if (quote == 0) break;
+                    if (quote == 0) break :blk remainder.len;
                     return lexer.addDefaultError("Unterminated string literal");
                 };
                 uncommitted_segment = remainder[0..interesting_character_idx];
@@ -372,9 +372,18 @@ fn NewLexer_(
                 }
                 lexer.consumeRemainderBytes(interesting_character_idx);
 
-                if (lexer.code_point == quote) {
-                    lexer.step();
-                    break;
+                switch (quote) {
+                    0 => {
+                        if (lexer.code_point == -1 or lexer.code_point == '\r' or lexer.code_point == '\n') {
+                            break;
+                        }
+                    },
+                    else => {
+                        if (lexer.code_point == quote) {
+                            lexer.step();
+                            break;
+                        }
+                    },
                 }
                 // commit segment
                 try lexer.temp_buffer_u8.appendSlice(uncommitted_segment.?);
@@ -398,14 +407,10 @@ fn NewLexer_(
                         }
                     },
                     '\r', '\n' => |c| {
+                        if (quote == 0) unreachable; // handled above
                         if (quote != '`' and quote != 0) return lexer.addDefaultError("Unterminated string literal");
                         // handle newline
                         if (c == '\r' and lexer.code_point == '\n') lexer.step();
-                        if (quote == 0) {
-                            // Implicitly-quoted strings end when they reach a newline OR end of file
-                            // This only applies to .env
-                            break;
-                        }
                         try lexer.temp_buffer_u8.append('\n');
                     },
                     '$' => {
@@ -1908,8 +1913,8 @@ fn NewLexer_(
             return lex;
         }
 
-        pub fn initJSON(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
-            var lex = LexerType{
+        pub fn initToParseSingleUnquotedString(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) !LexerType {
+            return LexerType{
                 .log = log,
                 .source = source,
                 .temp_buffer_u8 = std.ArrayList(u8).init(allocator),
@@ -1918,10 +1923,6 @@ fn NewLexer_(
                 .comments_to_preserve_before = std.ArrayList(js_ast.G.Comment).init(allocator),
                 .all_comments = std.ArrayList(logger.Range).init(allocator),
             };
-            lex.step();
-            try lex.next();
-
-            return lex;
         }
 
         pub fn initWithoutReading(log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) LexerType {
