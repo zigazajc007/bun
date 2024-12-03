@@ -124,3 +124,4 @@ de\u{2
   0b10110111,
   0b00101011,
 ...new TextEncoder().encode('`))')])
+/*= x7F */ print([...new TextEncoder().encode("\u3a28\u3a71\u3ae0\u3b2e\u0800EMabcfglmnoprstu\\bfms\x7f\x84\x8b\x90\x95\x98\xa6\xb3\xb9\xc8\xcflig\u803b\xc6\u40c6P\u803b&\u4026cute\u803b\xc1\u40c1reve;\u4102\u0100iyx}rc\u803b\xc2\u40c2;\u4410r;\uc000\ud835\udd04rave\u803b\xc0\u40c0pha;\u4391acr;")].map(c => c.toString(16)).join(" "))
