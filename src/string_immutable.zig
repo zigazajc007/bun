@@ -5430,9 +5430,6 @@ pub fn isZeroWidthCodepointType(comptime T: type, cp: T) bool {
         // Combining Diacritical Marks
         return true;
     }
-    if (cp >= 0x300 and cp <= 0x36f)
-        // Combining Diacritical Marks
-        return true;
 
     if (cp >= 0x200b and cp <= 0x200f) {
         // Modifying Invisible Characters
