@@ -979,7 +979,7 @@ fn NewLexer_(
                             // "#foo"
                             lexer.step();
                             if (lexer.code_point == '\\') {
-                                lexer.identifier = (try lexer.scanIdentifierWithEscapes(.private, "")).contents;
+                                lexer.identifier = (try lexer.scanIdentifierWithEscapes(.private, "#")).contents;
                             } else {
                                 if (!isIdentifierStart(lexer.code_point)) {
                                     try lexer.syntaxError();

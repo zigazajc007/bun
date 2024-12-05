@@ -2155,6 +2155,18 @@ console.log(resolve.length)
     expectParseError("class Foo { #\\u0063onstructor() {} }", 'Invalid method name "#constructor"');
     expectParseError("class Foo { static #\\u0063onstructor }", 'Invalid field name "#constructor"');
     expectParseError("class Foo { static #\\u0063onstructor() {} }", 'Invalid method name "#constructor"');
+    expectParseError("class Foo { #\\u{63}onstructor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { #\\u{63}onstructor() {} }", 'Invalid method name "#constructor"');
+    expectParseError("class Foo { static #\\u{63}onstructor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { static #\\u{63}onstructor() {} }", 'Invalid method name "#constructor"');
+    expectParseError("class Foo { #constru\\u0063tor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { #constru\\u0063tor() {} }", 'Invalid method name "#constructor"');
+    expectParseError("class Foo { static #constru\\u0063tor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { static #constru\\u0063tor() {} }", 'Invalid method name "#constructor"');
+    expectParseError("class Foo { #constru\\u{63}tor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { #constru\\u{63}tor() {} }", 'Invalid method name "#constructor"');
+    expectParseError("class Foo { static #constru\\u{63}tor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { static #constru\\u{63}tor() {} }", 'Invalid method name "#constructor"');
     const errorText = '"#foo" has already been declared';
     expectParseError("class Foo { #foo; #foo }", errorText);
     expectParseError("class Foo { #foo; static #foo }", errorText);
