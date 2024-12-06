@@ -3,8 +3,8 @@ print("abc def");
 print('abc def');
 print(`abc def`);
 /*= basic escapes */
-print("\a\b\c\d\e\f\g\h\i\j\k\l\m\n\o\p\q\r\s\t  \v\w  \y\z\'\"\\\
-\u{0}\u{1}\u{2}\u0000\u0001\u0002\0");
+print(btoa("\a\b\c\d\e\f\g\h\i\j\k\l\m\n\o\p\q\r\s\t  \v\w  \y\z\'\"\\\
+\u{0}\u{1}\u{2}\u0000\u0001\u0002\0"));
 /*=[c] newline escape forms 1 */ `
 print(">\\\r< >\\\n< >\\\r\n< >\\\u{2028}< >\\\u{2029}<");
 `

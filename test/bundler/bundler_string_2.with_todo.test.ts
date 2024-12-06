@@ -87,7 +87,7 @@ for (const testdef of file_cont.split("/*=")) {
       if (!req_no_node) expect(noderes!.exitCode).toBe(0);
       if (tdecoded != null) expect(evalres).toBeTypeOf("string");
       const nodeprinted = req_no_node ? null : noderes!.stdout.toString("utf-8");
-      const bunprinted = bunres.stdout.toString("utf-8");
+      const bunprinted = bunres.stdout.toString("utf-8").replaceAll("\r", "");
       expect({
         bunres_exitCode: bunres.exitCode,
         bunprinted: bunprinted,
