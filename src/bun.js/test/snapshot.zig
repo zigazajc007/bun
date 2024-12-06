@@ -396,7 +396,7 @@ pub const Snapshots = struct {
                 if (needs_pre_comma) try result_text.appendSlice(", ");
                 const result_text_writer = result_text.writer();
                 try result_text.appendSlice("`");
-                try bun.js_printer.writePreQuotedString(ils.value, @TypeOf(result_text_writer), result_text_writer, '`', false, false, .utf8);
+                try bun.js_printer.writePreQuotedString(.wtf8_replace_invalid, ils.value, @TypeOf(result_text_writer), result_text_writer, '`', false, false);
                 try result_text.appendSlice("`");
 
                 if (ils.is_added) Jest.runner.?.snapshots.added += 1;
