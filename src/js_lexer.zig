@@ -649,7 +649,7 @@ fn NewLexer_(
             return res.codepoint;
         }
 
-        fn step(lexer: *LexerType) void {
+        pub fn step(lexer: *LexerType) void {
             lexer.code_point = lexer.nextCodepoint();
 
             // Track the approximate number of newlines in the file so we can preallocate
