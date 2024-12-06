@@ -23,6 +23,10 @@ describe("package.json dependencies must be exact versions", async () => {
       } = await Bun.file(join(dir, "./package.json")).json();
 
       for (const [name, dep] of Object.entries(dependencies)) {
+        if (dep.startsWith("git://")) {
+          expect(dep).toMatch(/#[a-f0-9]{40}$/);
+          continue;
+        }
         expect(dep).toMatch(/^([a-zA-Z0-9\.])+$/);
       }
 

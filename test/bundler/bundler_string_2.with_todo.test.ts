@@ -18,8 +18,6 @@ const header_cont = new TextEncoder().encode(header_txt);
 const tmpdir = tempDirWithFiles("bundler_string_2", {});
 console.log(tmpdir);
 
-const line_ending = isWindows ? "\r\n" : "\n";
-
 let i = 0;
 for (const testdef of file_cont.split("/*=")) {
   if (!testdef.trim()) continue;
@@ -75,7 +73,7 @@ for (const testdef of file_cont.split("/*=")) {
     let evalres: string | Error = "";
     if (tdecoded != null) {
       try {
-        new Function("print", tdecoded)((msg: string) => (evalres += msg + line_ending));
+        new Function("print", tdecoded)((msg: string) => (evalres += msg + "\n"));
       } catch (e) {
         evalres = e as Error;
       }
@@ -86,7 +84,7 @@ for (const testdef of file_cont.split("/*=")) {
       // expect ok and same result
       if (!req_no_node) expect(noderes!.exitCode).toBe(0);
       if (tdecoded != null) expect(evalres).toBeTypeOf("string");
-      const nodeprinted = req_no_node ? null : noderes!.stdout.toString("utf-8");
+      const nodeprinted = req_no_node ? null : noderes!.stdout.toString("utf-8").replaceAll("\r", "");
       const bunprinted = bunres.stdout.toString("utf-8").replaceAll("\r", "");
       expect({
         bunres_exitCode: bunres.exitCode,
