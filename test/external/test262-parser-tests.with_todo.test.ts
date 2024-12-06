@@ -1,11 +1,7 @@
 import { test, expect } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
-import { fetchZip } from "./external_helper";
 
-const tests_path = fetchZip(
-  "https://github.com/tc39/test262-parser-tests/archive/refs/heads/master.zip",
-  "12200b2f1a82d6a5a3e940a33513228006abc68728f8fbd7a4dacb380e36c5142976",
-);
+const tests_path = import.meta.dirname + "/../node_modules/test262-parser-tests";
 
 const assert = require("assert");
 
@@ -295,12 +291,13 @@ const invalids = new Set<string>([
   "early/12a74c60f52a60de.js",
 ]);
 
+const testfn = (name: string) => (panics.has(name) ? test.skip : fails.has(name) ? test.todo : test);
+
 readdirSync(`${tests_path}/pass`).forEach(f => {
   const name = "pass/" + f;
   if (invalids.has(name)) return;
   let firstTree: unknown, secondTree: unknown;
-  test.todoIf(panics.has(name) || fails.has(name))(name, () => {
-    if (panics.has(name)) return expect(false).toBe(true);
+  testfn(name)(name, () => {
     assert.doesNotThrow(() => {
       firstTree = parse(name, readFileSync(`${tests_path}/${name}`, "utf8"));
     });
@@ -314,8 +311,7 @@ readdirSync(`${tests_path}/pass`).forEach(f => {
 readdirSync(`${tests_path}/fail`).forEach(f => {
   const name = "fail/" + f;
   if (invalids.has(name)) return;
-  test.todoIf(panics.has(name) || fails.has(name))(name, () => {
-    if (panics.has(name)) return expect(false).toBe(true);
+  testfn(name)(name, () => {
     assert.throws(() => {
       parse(name, readFileSync(`${tests_path}/${name}`, "utf8"));
     });
@@ -325,8 +321,7 @@ readdirSync(`${tests_path}/fail`).forEach(f => {
 readdirSync(`${tests_path}/early`).forEach(f => {
   const name = "early/" + f;
   if (invalids.has(name)) return;
-  test.todoIf(panics.has(name) || fails.has(name))(name, () => {
-    if (panics.has(name)) return expect(false).toBe(true);
+  testfn(name)(name, () => {
     assert.throws(() => {
       parse(name, readFileSync(`${tests_path}/${name}`, "utf8"));
     });

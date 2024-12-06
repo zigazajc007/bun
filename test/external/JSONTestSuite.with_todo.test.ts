@@ -1,12 +1,8 @@
 import { $ } from "bun";
 import { test, expect } from "bun:test";
 import { readdirSync } from "fs";
-import { fetchZip } from "./external_helper";
 
-const tests_path = fetchZip(
-  "https://github.com/nst/JSONTestSuite/archive/refs/heads/master.zip",
-  "1220b9601828b7cd4eecaaa831b7dccf231557f4888d5e2d2235e251f8fdacc0464e",
-);
+const tests_path = import.meta.dirname + "/../node_modules/JSONTestSuite";
 
 const bun_exe = Bun.argv[0];
 
