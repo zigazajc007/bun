@@ -487,9 +487,9 @@ pub const PackageJSONVersionChecker = struct {
                         p.lexer.token == .t_open_brace and
                         key.data == .e_string)
                     {
-                        if (strings.eqlComptime(key.data.e_string.data, "bin")) {
+                        if (key.data.e_string.eqlComptime("bin")) {
                             collect_prop_props = true;
-                        } else if (strings.eqlComptime(key.data.e_string.data, "directories")) {
+                        } else if (key.data.e_string.eqlComptime("directories")) {
                             is_directories = true;
                         }
 
@@ -508,7 +508,7 @@ pub const PackageJSONVersionChecker = struct {
                             if (value.data == .e_string) {
                                 if (!p.has_found_name and strings.eqlComptime(key.data.e_string.asWtf8AssertNotRope(), "name")) {
                                     const len = @min(
-                                        value.data.e_string.data.len,
+                                        value.data.e_string.asWtf8AssertNotRope().len,
                                         p.found_name_buf.len,
                                     );
 
@@ -518,7 +518,7 @@ pub const PackageJSONVersionChecker = struct {
                                     p.name_loc = value.loc;
                                 } else if (!p.has_found_version and strings.eqlComptime(key.data.e_string.asWtf8AssertNotRope(), "version")) {
                                     const len = @min(
-                                        value.data.e_string.data.len,
+                                        value.data.e_string.asWtf8AssertNotRope().len,
                                         p.found_version_buf.len,
                                     );
                                     bun.copy(u8, &p.found_version_buf, value.data.e_string.asWtf8AssertNotRope()[0..len]);

@@ -242,7 +242,7 @@ const JSONFormatterUTF8 = struct {
 
     pub fn format(self: JSONFormatterUTF8, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         if (self.opts.quote) {
-            try bun.js_printer.writeJSONString(.wtf8_replace_invalid, self.input, @TypeOf(writer), writer, .utf8);
+            try bun.js_printer.writeJSONString(.wtf8_replace_invalid, self.input, @TypeOf(writer), writer);
         } else {
             try bun.js_printer.writePreQuotedString(.wtf8_replace_invalid, self.input, @TypeOf(writer), writer, '"', false, true);
         }

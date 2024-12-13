@@ -613,7 +613,7 @@ pub fn Negatable(comptime T: type) type {
                     }
                 },
                 .e_string => |str| {
-                    this.apply(str.data);
+                    this.apply(str.asWtf8AssertNotRope());
                 },
                 else => {},
             }
