@@ -7,8 +7,10 @@
 /// Version 8: Fix for generated symbols
 /// Version 9: String printing changes
 /// Version 10: Constant folding for ''.charCodeAt(n)
-/// Version 11: Emits utf-16 files in rare cases
-const expected_version = 11;
+/// Version 11: Fix \uFFFF printing regression
+/// Version 12: "use strict"; makes it CommonJS if we otherwise don't know which one to pick.
+/// Version 13: Emits utf-16 files in rare cases
+const expected_version = 13;
 
 const bun = @import("root").bun;
 const std = @import("std");

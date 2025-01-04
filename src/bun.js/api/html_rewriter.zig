@@ -168,19 +168,17 @@ pub const HTMLRewriter = struct {
         return BufferOutputSink.init(new_context, global, response, this.builder);
     }
 
-    pub fn transform_(this: *HTMLRewriter, global: *JSGlobalObject, response_value: JSC.JSValue) JSValue {
+    pub fn transform_(this: *HTMLRewriter, global: *JSGlobalObject, response_value: JSC.JSValue) bun.JSError!JSValue {
         if (response_value.as(Response)) |response| {
             if (response.body.value == .Used) {
-                global.throwInvalidArguments("Response body already used", .{});
-                return .zero;
+                return global.throwInvalidArguments("Response body already used", .{});
             }
 
             const out = this.beginTransform(global, response);
 
             if (out != .zero) {
                 if (out.toError()) |err| {
-                    global.throwValue(err);
-                    return .zero;
+                    return global.throwValue(err);
                 }
             }
 
@@ -230,8 +228,7 @@ pub const HTMLRewriter = struct {
             }
         }
 
-        global.throwInvalidArguments("Expected Response or Body", .{});
-        return .zero;
+        return global.throwInvalidArguments("Expected Response or Body", .{});
     }
 
     pub const on = JSC.wrapInstanceMethod(HTMLRewriter, "on_", false);
@@ -777,8 +774,7 @@ const DocumentHandler = struct {
         };
 
         if (!thisObject.isObject()) {
-            global.throwInvalidArguments("Expected object", .{});
-            return error.JSError;
+            return global.throwInvalidArguments("Expected object", .{});
         }
 
         errdefer {
@@ -801,8 +797,7 @@ const DocumentHandler = struct {
 
         if (try thisObject.get(global, "doctype")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                global.throwInvalidArguments("doctype must be a function", .{});
-                return error.JSError;
+                return global.throwInvalidArguments("doctype must be a function", .{});
             }
             val.protect();
             handler.onDocTypeCallback = val;
@@ -810,8 +805,7 @@ const DocumentHandler = struct {
 
         if (try thisObject.get(global, "comments")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                global.throwInvalidArguments("comments must be a function", .{});
-                return error.JSError;
+                return global.throwInvalidArguments("comments must be a function", .{});
             }
             val.protect();
             handler.onCommentCallback = val;
@@ -819,8 +813,7 @@ const DocumentHandler = struct {
 
         if (try thisObject.get(global, "text")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                global.throwInvalidArguments("text must be a function", .{});
-                return error.JSError;
+                return global.throwInvalidArguments("text must be a function", .{});
             }
             val.protect();
             handler.onTextCallback = val;
@@ -828,8 +821,7 @@ const DocumentHandler = struct {
 
         if (try thisObject.get(global, "end")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                global.throwInvalidArguments("end must be a function", .{});
-                return error.JSError;
+                return global.throwInvalidArguments("end must be a function", .{});
             }
             val.protect();
             handler.onEndCallback = val;
@@ -933,14 +925,12 @@ const ElementHandler = struct {
         }
 
         if (!thisObject.isObject()) {
-            global.throwInvalidArguments("Expected object", .{});
-            return error.JSError;
+            return global.throwInvalidArguments("Expected object", .{});
         }
 
         if (try thisObject.get(global, "element")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                global.throwInvalidArguments("element must be a function", .{});
-                return error.JSError;
+                return global.throwInvalidArguments("element must be a function", .{});
             }
             val.protect();
             handler.onElementCallback = val;
@@ -948,8 +938,7 @@ const ElementHandler = struct {
 
         if (try thisObject.get(global, "comments")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                global.throwInvalidArguments("comments must be a function", .{});
-                return error.JSError;
+                return global.throwInvalidArguments("comments must be a function", .{});
             }
             val.protect();
             handler.onCommentCallback = val;
@@ -957,8 +946,7 @@ const ElementHandler = struct {
 
         if (try thisObject.get(global, "text")) |val| {
             if (val.isUndefinedOrNull() or !val.isCell() or !val.isCallable(global.vm())) {
-                global.throwInvalidArguments("text must be a function", .{});
-                return error.JSError;
+                return global.throwInvalidArguments("text must be a function", .{});
             }
             val.protect();
             handler.onTextCallback = val;
@@ -1169,6 +1157,26 @@ pub const DocType = struct {
             return JSValue.jsNull();
         return ZigString.init(str).toJS(globalObject);
     }
+
+    pub fn remove(
+        this: *DocType,
+        _: *JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) bun.JSError!JSValue {
+        if (this.doctype == null)
+            return JSValue.jsUndefined();
+        this.doctype.?.remove();
+        return callFrame.this();
+    }
+
+    pub fn removed(
+        this: *DocType,
+        _: *JSGlobalObject,
+    ) JSValue {
+        if (this.doctype == null)
+            return JSValue.jsUndefined();
+        return JSValue.jsBoolean(this.doctype.?.isRemoved());
+    }
 };
 
 pub const DocEnd = struct {
@@ -1299,7 +1307,7 @@ pub const Comment = struct {
         var text = value.toSlice(global, bun.default_allocator);
         defer text.deinit();
         this.comment.?.setText(text.slice()) catch {
-            global.throwValue(throwLOLHTMLError(global));
+            global.throwValue(throwLOLHTMLError(global)) catch {};
             return false;
         };
 
@@ -1423,7 +1431,7 @@ pub const EndTag = struct {
         var text = value.toSlice(global, bun.default_allocator);
         defer text.deinit();
         this.end_tag.?.setName(text.slice()) catch {
-            global.throwValue(throwLOLHTMLError(global));
+            global.throwValue(throwLOLHTMLError(global)) catch {};
             return false;
         };
 
@@ -1708,7 +1716,7 @@ pub const Element = struct {
         defer text.deinit();
 
         this.element.?.setTagName(text.slice()) catch {
-            global.throwValue(throwLOLHTMLError(global));
+            global.throwValue(throwLOLHTMLError(global)) catch {};
             return false;
         };
 
