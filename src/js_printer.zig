@@ -1035,7 +1035,7 @@ fn NewPrinter(
                     printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(__filename)"), "globalThis.Bun.jest(__filename)");
                 },
                 else => {
-                    if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                    if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                     printInternalBunImport(p, import, @TypeOf("globalThis.Bun.jest(import.meta.path)"), "globalThis.Bun.jest(import.meta.path)");
                 },
             }
@@ -1726,14 +1726,14 @@ fn NewPrinter(
                             if (module_type == .cjs) {
                                 p.print("Promise.resolve(globalThis.Bun.jest(__filename))");
                             } else {
-                                if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                                if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                                 p.print("Promise.resolve(globalThis.Bun.jest(import.meta.path))");
                             }
                         } else if (record.kind == .require) {
                             if (module_type == .cjs) {
                                 p.print("globalThis.Bun.jest(__filename)");
                             } else {
-                                if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                                if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                                 p.print("globalThis.Bun.jest(import.meta.path)");
                             }
                         }
@@ -1880,7 +1880,7 @@ fn NewPrinter(
                 }
 
                 if (module_type == .esm and is_bun_platform) {
-                    if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                    if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                     p.print("import.meta.require");
                 } else if (p.options.require_ref) |ref| {
                     p.printSymbol(ref);
@@ -2092,7 +2092,7 @@ fn NewPrinter(
                         p.print(".importMeta()");
                     } else if (!p.options.import_meta_ref.isValid()) {
                         // Most of the time, leave it in there
-                        if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                        if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                         p.print("import.meta");
                     } else {
                         // Note: The bundler will not hit this code path. The bundler will replace
@@ -2117,7 +2117,7 @@ fn NewPrinter(
                             p.printSpaceBeforeIdentifier();
                             p.addSourceMapping(expr.loc);
                         }
-                        if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                        if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                         p.print("import.meta.main");
                     } else {
                         bun.assert(p.options.module_type != .internal_bake_dev);
@@ -2307,7 +2307,7 @@ fn NewPrinter(
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .esm and is_bun_platform) {
-                        if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                        if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                         p.print("import.meta.require.main");
                     } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
@@ -2321,7 +2321,7 @@ fn NewPrinter(
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .esm and is_bun_platform) {
-                        if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                        if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                         p.print("import.meta.require");
                     } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
@@ -2334,7 +2334,7 @@ fn NewPrinter(
                     p.addSourceMapping(expr.loc);
 
                     if (p.options.module_type == .esm and is_bun_platform) {
-                        if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                        if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                         p.print("import.meta.require.resolve");
                     } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
@@ -2364,7 +2364,7 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
 
                     if (p.options.module_type == .esm and is_bun_platform) {
-                        if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                        if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                         p.print("import.meta.require.resolve");
                     } else if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
@@ -4413,7 +4413,7 @@ fn NewPrinter(
                                 p.printSymbol(s.namespace_ref);
                                 p.@"print = "();
 
-                                if (p.moduleInfo()) |mi| mi.contains_import_meta = true;
+                                if (p.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
                                 p.print("import.meta.require(");
                                 p.printImportRecordPath(record);
                                 p.print(")");
@@ -4518,7 +4518,7 @@ fn NewPrinter(
 
                         if (p.moduleInfo()) |mi| {
                             try mi.addVar(local_name, .lexical);
-                            try mi.addImportInfoSingle(import_record_path, "default", local_name);
+                            try mi.addImportInfoSingle(import_record_path, "default", local_name, false);
                         }
                     }
 
@@ -4559,8 +4559,9 @@ fn NewPrinter(
                             }
 
                             if (p.moduleInfo()) |mi| {
+                                const symbol = p.symbols().get(item.name.ref.?).?;
                                 try mi.addVar(local_name, .lexical);
-                                try mi.addImportInfoSingle(import_record_path, item.alias, local_name);
+                                try mi.addImportInfoSingle(import_record_path, item.alias, local_name, symbol.use_count_in_export > 0 and symbol.use_count_estimate <= symbol.use_count_in_export);
                             }
                         }
 

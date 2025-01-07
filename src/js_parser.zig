@@ -19148,6 +19148,7 @@ fn NewParser_(
                         const name = p.loadNameFromRef(item.name.ref.?);
                         const symbol = try p.findSymbol(item.alias_loc, name);
                         const ref = symbol.ref;
+                        if (is_typescript_enabled) p.symbols.items[ref.innerIndex()].use_count_in_export += 1;
 
                         if (p.symbols.items[ref.innerIndex()].kind == .unbound) {
                             // Silently strip exports of non-local symbols in TypeScript, since
@@ -23755,6 +23756,7 @@ fn NewParser_(
                 .top_level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,
                 .has_commonjs_export_names = p.has_commonjs_export_names,
+                .is_from_typescript = is_typescript_enabled,
 
                 .hashbang = hashbang,
 

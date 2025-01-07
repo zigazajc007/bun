@@ -83,48 +83,136 @@ for (const b_file of b_files) {
           expect(JSON.parse(result.stdout.toString().trim())).toEqual({ my_value: "2", my_only: "3" });
         };
 
-        test.todoIf(b_file.name !== "export star" && b_file.name !== "export merge")("run", () => {
+        test("run", () => {
           runAndVerify("c.ts");
         });
 
         test("build", async () => {
-          const result = Bun.spawnSync({
-            cmd: [bunExe(), "build", "--target=bun", "--outfile", "bundle.js", "c.ts"],
-            cwd: dir,
-            env: bunEnv,
-            stdio: ["inherit", "inherit", "inherit"],
+          const build_result = await Bun.build({
+            entrypoints: [dir + "/c.ts"],
+            outdir: dir + "/dist",
           });
-
-          expect(result.exitCode).toBe(0);
-          runAndVerify("bundle.js");
+          expect(build_result.success).toBe(true);
+          runAndVerify(dir + "/dist/c.js");
         });
       });
     }
   });
 }
 
-test("import not found", () => {
+describe("import not found", () => {
+  for (const [ccase, target_value, name] of [
+    [``, /SyntaxError: Export named 'not_found' not found in module '[^']+?'\./, "none"],
+    [
+      `export default function not_found() {};`,
+      /SyntaxError: Export named 'not_found' not found in module '[^']+?'\. Did you mean to import default\?/,
+      "default with same name",
+    ],
+    [
+      `export type not_found = "not_found";`,
+      /SyntaxError: Export named 'not_found' not found in module '[^']+?'\./,
+      "type",
+    ],
+  ] as const)
+    test(`${name}`, () => {
+      const dir = tempDirWithFiles("type-export", {
+        "a.ts": ccase,
+        "b.ts": /*js*/ `
+          import { not_found } from "./a";
+          console.log(not_found);
+        `,
+        "nf.ts": "",
+      });
+
+      const result = Bun.spawnSync({
+        cmd: [bunExe(), "run", "b.ts"],
+        cwd: dir,
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+
+      expect(result.stderr?.toString().trim()).toMatch(target_value);
+      expect({
+        exitCode: result.exitCode,
+        stdout: result.stdout?.toString().trim(),
+      }).toEqual({
+        exitCode: 1,
+        stdout: "",
+      });
+    });
+});
+
+test("js file type export", () => {
   const dir = tempDirWithFiles("type-export", {
-    "a.ts": `export const a = 25; export const c = "hello";`,
-    "b.ts": /*js*/ `
-      import { a, b, c } from "./a";
-      console.log(a, b, c);
-    `,
+    "a.js": "export {not_found};",
   });
 
   const result = Bun.spawnSync({
-    cmd: [bunExe(), "run", "b.ts"],
+    cmd: [bunExe(), "a.js"],
     cwd: dir,
     env: bunEnv,
     stdio: ["inherit", "pipe", "pipe"],
   });
-
-  expect(result.stderr?.toString().trim()).toContain("SyntaxError: Export named 'b' not found in module");
-  expect({
-    exitCode: result.exitCode,
-    stdout: result.stdout?.toString().trim(),
-  }).toEqual({
-    exitCode: 1,
-    stdout: "",
+  expect(result.stderr?.toString().trim()).toInclude('error: "not_found" is not declared in this file');
+  expect(result.exitCode).toBe(1);
+});
+test("js file type import", () => {
+  const dir = tempDirWithFiles("type-import", {
+    "b.js": "import {type_only} from './ts.ts';",
+    "ts.ts": "export type type_only = 'type_only';",
   });
+  const result = Bun.spawnSync({
+    cmd: [bunExe(), "b.js"],
+    cwd: dir,
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+  expect(result.stderr?.toString().trim()).toInclude("Export named 'type_only' not found in module '");
+  expect(result.stderr?.toString().trim()).not.toInclude("Did you mean to import default?");
+  expect(result.exitCode).toBe(1);
+});
+test("js file type import with default export", () => {
+  const dir = tempDirWithFiles("type-import", {
+    "b.js": "import {type_only} from './ts.ts';",
+    "ts.ts": "export type type_only = 'type_only'; export default function type_only() {};",
+  });
+  const result = Bun.spawnSync({
+    cmd: [bunExe(), "b.js"],
+    cwd: dir,
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+  expect(result.stderr?.toString().trim()).toInclude("Export named 'type_only' not found in module '");
+  expect(result.stderr?.toString().trim()).toInclude("Did you mean to import default?");
+  expect(result.exitCode).toBe(1);
+});
+
+test("js file with through export", () => {
+  const dir = tempDirWithFiles("type-import", {
+    "b.js": "export {type_only} from './ts.ts';",
+    "ts.ts": "export type type_only = 'type_only'; export default function type_only() {};",
+  });
+  const result = Bun.spawnSync({
+    cmd: [bunExe(), "b.js"],
+    cwd: dir,
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+  expect(result.stderr?.toString().trim()).toInclude("SyntaxError: export 'type_only' not found in './ts.ts'\n");
+  expect(result.exitCode).toBe(1);
+});
+
+test("js file with through export 2", () => {
+  const dir = tempDirWithFiles("type-import", {
+    "b.js": "import {type_only} from './ts.ts'; export {type_only};",
+    "ts.ts": "export type type_only = 'type_only'; export default function type_only() {};",
+  });
+  const result = Bun.spawnSync({
+    cmd: [bunExe(), "b.js"],
+    cwd: dir,
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+  expect(result.stderr?.toString().trim()).toInclude("SyntaxError: export 'type_only' not found in './ts.ts'\n");
+  expect(result.exitCode).toBe(1);
 });
