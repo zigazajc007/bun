@@ -216,3 +216,47 @@ test("js file with through export 2", () => {
   expect(result.stderr?.toString().trim()).toInclude("SyntaxError: export 'type_only' not found in './ts.ts'\n");
   expect(result.exitCode).toBe(1);
 });
+
+describe("through export merge", () => {
+  // this isn't allowed, even in typescript (tsc emits "Duplicate identifier 'value'.")
+  for (const fmt of ["js", "ts"]) {
+    describe(fmt, () => {
+      for (const [name, mode] of [
+        ["through", "export {value} from './b'; export {value} from './c';"],
+        ["direct", "export {value} from './b'; export const value = 'abc';"],
+        ["direct2", "export const value = 'abc'; export {value};"],
+        ["ns", "export * as value from './c'; export * as value from './c';"],
+      ]) {
+        describe(name, () => {
+          const dir = tempDirWithFiles("type-import", {
+            ["main." + fmt]: "import {value} from './a'; console.log(value);",
+            ["a." + fmt]: mode,
+            ["b." + fmt]: fmt === "ts" ? "export type value = 'b';" : "",
+            ["c." + fmt]: "export const value = 'c';",
+          });
+          for (const file of ["main." + fmt, "a." + fmt]) {
+            test(file, () => {
+              const result = Bun.spawnSync({
+                cmd: [bunExe(), file],
+                cwd: dir,
+                env: bunEnv,
+                stdio: ["inherit", "pipe", "pipe"],
+              });
+              expect(result.stderr?.toString().trim()).toInclude(
+                file === "a." + fmt
+                  ? 'error: Multiple exports with the same name "value"\n' // bun's syntax error
+                  : "SyntaxError: Cannot export a duplicate name 'value'.\n", // jsc's syntax error
+              );
+              expect(result.exitCode).toBe(1);
+            });
+          }
+        });
+      }
+    });
+  }
+});
+
+// TODO:
+// - check ownkeys from a star import
+// - check commonjs cases
+// - what happens with `export * from ./a; export * from ./b` where a and b have different definitions of the same name?
