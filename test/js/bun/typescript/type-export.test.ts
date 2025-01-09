@@ -257,6 +257,138 @@ describe("through export merge", () => {
 });
 
 // TODO:
-// - check ownkeys from a star import
-// - check commonjs cases
-// - what happens with `export * from ./a; export * from ./b` where a and b have different definitions of the same name?
+test("check ownkeys from a star import", () => {
+  const dir = tempDirWithFiles("ownkeys-star-import", {
+    ["main.ts"]: `
+            import * as ns from './a';
+            console.log(JSON.stringify({
+              keys: Object.keys(ns),
+              ns,
+              has_sometype: Object.hasOwn(ns, 'sometype'),
+            }));
+          `,
+    ["a.ts"]: "export * from './b'; export {sometype} from './b';",
+    ["b.ts"]: "export const value = 'b'; export const anotherValue = 'another'; export type sometype = 'sometype';",
+  });
+  const result = Bun.spawnSync({
+    cmd: [bunExe(), "main.ts"],
+    cwd: dir,
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+  expect(result.stderr?.toString().trim()).toBe("");
+  expect(JSON.parse(result.stdout?.toString().trim())).toEqual({
+    keys: ["anotherValue", "value"],
+    ns: {
+      anotherValue: "another",
+      value: "b",
+    },
+    has_sometype: false,
+  });
+  expect(result.exitCode).toBe(0);
+});
+test("check commonjs", () => {
+  const dir = tempDirWithFiles("commonjs", {
+    ["main.ts"]: "const {my_value, my_type} = require('./a'); console.log(my_value, my_type);",
+    ["a.ts"]: "module.exports = require('./b');",
+    ["b.ts"]: "export const my_value = 'my_value'; export type my_type = 'my_type';",
+  });
+  const result = Bun.spawnSync({
+    cmd: [bunExe(), "main.ts"],
+    cwd: dir,
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+  expect(result.stderr?.toString().trim()).toBe("");
+  expect(result.stdout?.toString().trim()).toBe("my_value undefined");
+  expect(result.exitCode).toBe(0);
+});
+test("check merge", () => {
+  const dir = tempDirWithFiles("merge", {
+    ["main.ts"]: "import {value} from './a'; console.log(value);",
+    ["a.ts"]: "export * from './b'; export * from './c';",
+    ["b.ts"]: "export const value = 'b';",
+    ["c.ts"]: "export const value = 'c';",
+  });
+  const result = Bun.spawnSync({
+    cmd: [bunExe(), "main.ts"],
+    cwd: dir,
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+  expect(result.stderr?.toString().trim()).toInclude(
+    "SyntaxError: Export named 'value' cannot be resolved due to ambiguous multiple bindings in module",
+  );
+  expect(result.exitCode).toBe(1);
+});
+describe("export * from './module'", () => {
+  for (const fmt of ["js", "ts"]) {
+    describe(fmt, () => {
+      const dir = tempDirWithFiles("export-star", {
+        ["main." + fmt]: "import {value} from './a'; console.log(value);",
+        ["a." + fmt]: "export * from './b';",
+        ["b." + fmt]: "export const value = 'b';",
+      });
+      for (const file of ["main." + fmt, "a." + fmt]) {
+        test(file, () => {
+          const result = Bun.spawnSync({
+            cmd: [bunExe(), file],
+            cwd: dir,
+            env: bunEnv,
+            stdio: ["inherit", "pipe", "pipe"],
+          });
+          expect(result.stderr?.toString().trim()).toBe("");
+          expect(result.exitCode).toBe(0);
+        });
+      }
+    });
+  }
+});
+
+describe("export * as ns from './module'", () => {
+  for (const fmt of ["js", "ts"]) {
+    describe(fmt, () => {
+      const dir = tempDirWithFiles("export-star-as", {
+        ["main." + fmt]: "import {ns} from './a'; console.log(ns.value);",
+        ["a." + fmt]: "export * as ns from './b';",
+        ["b." + fmt]: "export const value = 'b';",
+      });
+      for (const file of ["main." + fmt, "a." + fmt]) {
+        test(file, () => {
+          const result = Bun.spawnSync({
+            cmd: [bunExe(), file],
+            cwd: dir,
+            env: bunEnv,
+            stdio: ["inherit", "pipe", "pipe"],
+          });
+          expect(result.stderr?.toString().trim()).toBe("");
+          expect(result.exitCode).toBe(0);
+        });
+      }
+    });
+  }
+});
+
+describe("export type {Type} from './module'", () => {
+  for (const fmt of ["ts"]) {
+    describe(fmt, () => {
+      const dir = tempDirWithFiles("export-type", {
+        ["main." + fmt]: "import {Type} from './a'; const x: Type = 'test'; console.log(x);",
+        ["a." + fmt]: "export type {Type} from './b';",
+        ["b." + fmt]: "export type Type = string;",
+      });
+      for (const file of ["main." + fmt, "a." + fmt]) {
+        test(file, () => {
+          const result = Bun.spawnSync({
+            cmd: [bunExe(), file],
+            cwd: dir,
+            env: bunEnv,
+            stdio: ["inherit", "pipe", "pipe"],
+          });
+          expect(result.stderr?.toString().trim()).toBe("");
+          expect(result.exitCode).toBe(0);
+        });
+      }
+    });
+  }
+});
