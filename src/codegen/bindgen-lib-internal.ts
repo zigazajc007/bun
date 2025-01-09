@@ -886,6 +886,7 @@ function snapshotCallerLocation(): string {
 }
 
 function stackTraceFileName(line: string): string {
+  if (line.includes("/Users/pfg")) return line.match(/(\/Users\/[\/A-Za-z0-9\.\_]+)/)[1];
   return / \(((?:[A-Za-z]:)?.*?)[:)]/.exec(line)![1].replaceAll("\\", "/");
 }
 
