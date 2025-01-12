@@ -64,60 +64,23 @@ export function getStdinStream(fd) {
   // Ideally we could use this:
   // return require("node:stream")[Symbol.for("::bunternal::")]._ReadableFromWeb(Bun.stdin.stream());
   // but we need to extend TTY/FS ReadStream
-  const native = Bun.stdin.stream();
-
-  var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  var readerRef;
+  const original = Bun.stdin.stream();
+  const source = original.$bunNativePtr;
 
   var shouldUnref = false;
 
   function ref() {
-    $debug("ref();", reader ? "already has reader" : "getting reader");
-    reader ??= native.getReader();
-    // TODO: remove this. likely we are dereferencing the stream
-    // when there is still more data to be read.
-    readerRef ??= setInterval(() => {}, 1 << 30);
-    shouldUnref = false;
+    source.updateRef(true);
+    shouldUnref = true;
   }
 
   function unref() {
-    $debug("unref();");
-    if (readerRef) {
-      clearInterval(readerRef);
-      readerRef = undefined;
-      $debug("cleared timeout");
-    }
-    if (reader) {
-      try {
-        reader.releaseLock();
-        reader = undefined;
-        $debug("released reader");
-      } catch (e: any) {
-        $debug("reader lock cannot be released, waiting");
-        $assert(e.message === "There are still pending read requests, cannot release the lock");
-
-        // Releasing the lock is not possible as there are active reads
-        // we will instead pretend we are unref'd, and release the lock once the reads are finished.
-        shouldUnref = true;
-
-        // unref the native part of the stream
-        try {
-          $getByIdDirectPrivate($getByIdDirectPrivate(native, "readableStreamController"), "underlyingSource").$resume(
-            false,
-          );
-        } catch (e) {
-          if (IS_BUN_DEVELOPMENT) {
-            // we assume this isn't possible, but because we aren't sure
-            // we will ignore if error during release, but make a big deal in debug
-            console.error(e);
-            $assert(!"reachable");
-          }
-        }
-      }
-    }
+    source.updateRef(false);
+    shouldUnref = false;
   }
 
   const tty = require("node:tty");
+
   const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
   const stream = new ReadStream(fd);
 
@@ -156,59 +119,6 @@ export function getStdinStream(fd) {
     $debug("resume();");
     ref();
     return originalResume.$call(this);
-  };
-
-  async function internalRead(stream) {
-    $debug("internalRead();");
-    try {
-      var done: boolean, value: Uint8Array[];
-      $assert(reader);
-      const pendingRead = reader.readMany();
-
-      if ($isPromise(pendingRead)) {
-        ({ done, value } = await pendingRead);
-      } else {
-        $debug("readMany() did not return a promise");
-        ({ done, value } = pendingRead);
-      }
-
-      if (!done) {
-        stream.push(value[0]);
-
-        // shouldn't actually happen, but just in case
-        const length = value.length;
-        for (let i = 1; i < length; i++) {
-          stream.push(value[i]);
-        }
-
-        if (shouldUnref) unref();
-      } else {
-        if (!stream_endEmitted) {
-          stream_endEmitted = true;
-          stream.emit("end");
-        }
-        if (!stream_destroyed) {
-          stream_destroyed = true;
-          stream.destroy();
-          unref();
-        }
-      }
-    } catch (err) {
-      if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
-        // Not a bug. Happens in unref().
-        return;
-      }
-      stream.destroy(err);
-    }
-  }
-
-  stream._read = function (size) {
-    $debug("_read();", reader);
-    if (!reader) return;
-
-    if (!shouldUnref) {
-      internalRead(this);
-    }
   };
 
   stream.on("resume", () => {

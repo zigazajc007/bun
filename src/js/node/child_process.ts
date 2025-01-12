@@ -1125,12 +1125,14 @@ class ChildProcess extends EventEmitter {
     NativeWritable ||= StreamModule.NativeWritable;
     ReadableFromWeb ||= StreamModule.Readable.fromWeb;
 
+    const handle = this.#handle;
+
     const io = this.#stdioOptions[i];
     switch (i) {
       case 0: {
         switch (io) {
           case "pipe": {
-            const stdin = this.#handle.stdin;
+            const stdin = handle && handle.stdin;
 
             if (!stdin)
               // This can happen if the process was already killed.
@@ -1150,7 +1152,7 @@ class ChildProcess extends EventEmitter {
       case 1: {
         switch (io) {
           case "pipe": {
-            const value = this.#handle[fdToStdioName(i)];
+            const value = handle && handle[fdToStdioName(i)!];
 
             if (!value)
               // This can happen if the process was already killed.
@@ -1172,7 +1174,7 @@ class ChildProcess extends EventEmitter {
         switch (io) {
           case "pipe":
             if (!NetModule) NetModule = require("node:net");
-            const fd = this.#handle.stdio[i];
+            const fd = handle && handle.stdio[i];
             if (!fd) return null;
             return new NetModule.connect({ fd });
         }

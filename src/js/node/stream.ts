@@ -5258,10 +5258,18 @@ function createNativeStreamReadable(Readable) {
   var handleNumberResult = function (nativeReadable, result, view, isClosed) {
     if (result > 0) {
       const slice = view.subarray(0, result);
-      view = slice.byteLength < view.byteLength ? view.subarray(result) : undefined;
+      const remainder = view.subarray(result);
       if (slice.byteLength > 0) {
         nativeReadable.push(slice);
       }
+
+      if (isClosed) {
+        ProcessNextTick(() => {
+          nativeReadable.push(null);
+        });
+      }
+
+      return remainder.byteLength > 0 ? remainder : undefined;
     }
 
     if (isClosed) {

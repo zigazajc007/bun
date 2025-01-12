@@ -22,8 +22,8 @@ const fixtures = {
 
 const invalid = Buffer.from([0xc0]);
 
-const bigText = Buffer.from("a".repeat(1 * 1024 * 1024));
-const smallText = Buffer.from("Hello".repeat(16));
+const bigText = Buffer.alloc(1 * 1024 * 1024, "a");
+const smallText = Buffer.alloc(16 * "Hello".length, "Hello");
 const empty = Buffer.alloc(0);
 
 describe("fetch() with streaming", () => {
@@ -913,8 +913,13 @@ describe("fetch() with streaming", () => {
     });
 
     test(`Content-Length response works (multiple parts) with ${compression} compression`, async () => {
+    it(`Content-Length response works (multiple parts) with ${compression} compression`, async () => {
       {
-        const content = "a".repeat(64 * 1024);
+        let rawBytes = Buffer.allocUnsafe(16 * 1024);
+        // Random data doesn't compress well. We need enough random data that
+        // the compressed data is larger than 64 bytes.
+        crypto.getRandomValues(rawBytes);
+        const content = rawBytes.toString("hex");
         var onReceivedHeaders = Promise.withResolvers();
         using server = Bun.serve({
           port: 0,
@@ -943,16 +948,19 @@ describe("fetch() with streaming", () => {
           },
         });
         let res = await fetch(`http://${server.hostname}:${server.port}`, {});
-        onReceivedHeaders.resolve();
+        let onReceiveHeadersResolve = onReceivedHeaders.resolve;
         onReceivedHeaders = Promise.withResolvers();
+        onReceiveHeadersResolve();
         gcTick(false);
         const result = await res.text();
         gcTick(false);
         expect(result).toBe(content);
 
         res = await fetch(`http://${server.hostname}:${server.port}`, {});
-        onReceivedHeaders.resolve();
+        onReceiveHeadersResolve = onReceivedHeaders.resolve;
         onReceivedHeaders = Promise.withResolvers();
+        onReceiveHeadersResolve();
+
         gcTick(false);
         const reader = res.body?.getReader();
 
