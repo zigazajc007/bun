@@ -1788,6 +1788,18 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     }
   }
 
+  // This was a type: "bytes" until Bun v1.1.44, but pendingPullIntos was not really
+  // compatible with how we send data to the stream, and "mode: 'byob'" wasn't
+  // supported so changing it isn't an observable change.
+  //
+  // When we receive chunks of data from native code, we sometimes read more
+  // than what the input buffer provided. When that happens, we return a typed
+  // array instead of the number of bytes read.
+  //
+  // When that happens, the ReadableByteStreamController creates (byteLength / autoAllocateChunkSize) pending pull into descriptors.
+  // So if that number is something like 16 * 1024, and we actually read 2 MB, you're going to create 128 pending pull into descriptors.
+  //
+  // And those pendingPullIntos were often never actually drained.
   class NativeReadableStreamSource {
     constructor(handle, autoAllocateChunkSize, drainValue) {
       $putByIdDirectPrivate(this, "stream", handle);
