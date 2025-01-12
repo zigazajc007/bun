@@ -1785,6 +1785,10 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       if (source?.$stream) {
         source.$stream = undefined;
       }
+
+      if (source) {
+        source.$data = undefined;
+      }
     }
   }
 
@@ -1846,11 +1850,12 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     #chunk;
     #closed = false;
 
-    #internalBuffer?: Uint8Array;
+    $data?: Uint8Array;
 
     #onClose() {
       this.#closed = true;
       this.#controller = undefined;
+      this.$data = undefined;
 
       var controller = this.#controller?.deref?.();
 
@@ -1861,9 +1866,9 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
     }
 
     #getInternalBuffer(chunkSize) {
-      var chunk = this.#internalBuffer;
+      var chunk = this.$data;
       if (!chunk || chunk.length < chunkSize) {
-        this.#internalBuffer = chunk = new Uint8Array(chunkSize);
+        this.$data = chunk = new Uint8Array(chunkSize);
       }
 
       return chunk;
@@ -1876,6 +1881,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
 
       if (isClosed) {
         $enqueueJob(callClose, controller);
+        return undefined;
       }
 
       return view;
@@ -1888,7 +1894,11 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
 
         if (remaining > 0) {
           toEnqueue = view.subarray(0, result);
-          view = view.subarray(result);
+          if (remaining > 0) {
+            view = view.subarray(result);
+          } else {
+            view = undefined;
+          }
         }
 
         controller.enqueue(toEnqueue);
@@ -1896,6 +1906,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
 
       if (isClosed) {
         $enqueueJob(callClose, controller);
+        return undefined;
       }
 
       return view;
@@ -1907,7 +1918,7 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
         return this.#handleNumberResult(result, view, isClosed, controller);
       } else if (typeof result === "boolean") {
         $enqueueJob(callClose, controller);
-        return (view?.byteLength ?? 0) > 0 ? view : undefined;
+        return undefined;
       } else if ($isTypedArrayView(result)) {
         if (!isClosed) this.#adjustHighWaterMark(result.byteLength);
         return this.#handleArrayBufferViewResult(result, view, isClosed, controller);
@@ -1922,8 +1933,10 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
 
       if (!handle || this.#closed) {
         this.#controller = undefined;
+        this.#closed = true;
         $putByIdDirectPrivate(this, "stream", undefined);
         $enqueueJob(callClose, controller);
+        this.$data = undefined;
         return;
       }
 
@@ -1935,16 +1948,32 @@ export function createLazyLoadedStreamPrototype(): typeof ReadableStreamDefaultC
       const view = this.#getInternalBuffer(this.autoAllocateChunkSize);
       const result = handle.pull(view, closer);
       if ($isPromise(result)) {
-        return result.$then(result => {
-          this.#internalBuffer = this.#onNativeReadableStreamResult(result, view, closer[0], controller);
-        });
+        return result.$then(
+          result => {
+            this.$data = this.#onNativeReadableStreamResult(result, view, closer[0], controller);
+            if (this.#closed) {
+              this.$data = undefined;
+            }
+          },
+          err => {
+            this.$data = undefined;
+            this.#closed = true;
+            this.#controller = undefined;
+            controller.error(err);
+            this.#onClose();
+          },
+        );
       }
 
-      this.#internalBuffer = this.#onNativeReadableStreamResult(result, view, closer[0], controller);
+      this.$data = this.#onNativeReadableStreamResult(result, view, closer[0], controller);
+      if (this.#closed) {
+        this.$data = undefined;
+      }
     }
 
     #cancel(reason) {
       var handle = $getByIdDirectPrivate(this, "stream");
+      this.$data = undefined;
       if (handle) {
         handle.updateRef(false);
         handle.cancel(reason);
