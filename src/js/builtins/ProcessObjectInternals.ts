@@ -102,10 +102,9 @@ export function getStdinStream(fd) {
 
         // unref the native part of the stream
         try {
-          $getByIdDirectPrivate(
-            $getByIdDirectPrivate(native, "readableStreamController"),
-            "underlyingByteSource",
-          ).$resume(false);
+          $getByIdDirectPrivate($getByIdDirectPrivate(native, "readableStreamController"), "underlyingSource").$resume(
+            false,
+          );
         } catch (e) {
           if (IS_BUN_DEVELOPMENT) {
             // we assume this isn't possible, but because we aren't sure
