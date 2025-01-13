@@ -64,23 +64,41 @@ export function getStdinStream(fd) {
   // Ideally we could use this:
   // return require("node:stream")[Symbol.for("::bunternal::")]._ReadableFromWeb(Bun.stdin.stream());
   // but we need to extend TTY/FS ReadStream
-  const original = Bun.stdin.stream();
-  const source = original.$bunNativePtr;
+  const native = Bun.stdin.stream();
+  // @ts-expect-error
+  const source = native.$bunNativePtr;
+
+  var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
   var shouldUnref = false;
 
   function ref() {
+    $debug("ref();", reader ? "already has reader" : "getting reader");
+    reader ??= native.getReader();
     source.updateRef(true);
-    shouldUnref = true;
-  }
-
-  function unref() {
-    source.updateRef(false);
     shouldUnref = false;
   }
 
-  const tty = require("node:tty");
+  function unref() {
+    $debug("unref();");
 
+    if (reader) {
+      try {
+        reader.releaseLock();
+        reader = undefined;
+        $debug("released reader");
+      } catch (e: any) {
+        $debug("reader lock cannot be released, waiting");
+        $assert(e.message === "There are still pending read requests, cannot release the lock");
+
+        // Releasing the lock is not possible as there are active reads
+        // we will instead pretend we are unref'd, and release the lock once the reads are finished.
+        source?.updateRef?.(false);
+      }
+    }
+  }
+
+  const tty = require("node:tty");
   const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
   const stream = new ReadStream(fd);
 
@@ -121,6 +139,45 @@ export function getStdinStream(fd) {
     return originalResume.$call(this);
   };
 
+  async function internalRead(stream) {
+    $debug("internalRead();");
+    try {
+      $assert(reader);
+      const { done, value } = await reader.read();
+
+      if (value) {
+        stream.push(value);
+
+        if (shouldUnref) unref();
+      } else {
+        if (!stream_endEmitted) {
+          stream_endEmitted = true;
+          stream.emit("end");
+        }
+        if (!stream_destroyed) {
+          stream_destroyed = true;
+          stream.destroy();
+          unref();
+        }
+      }
+    } catch (err) {
+      if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
+        // Not a bug. Happens in unref().
+        return;
+      }
+      stream.destroy(err);
+    }
+  }
+
+  stream._read = function (size) {
+    $debug("_read();", reader);
+    if (!reader) return;
+
+    if (!shouldUnref) {
+      internalRead(this);
+    }
+  };
+
   stream.on("resume", () => {
     $debug('on("resume");');
     ref();
@@ -150,7 +207,6 @@ export function getStdinStream(fd) {
 
   return stream;
 }
-
 export function initializeNextTickQueue(process, nextTickQueue, drainMicrotasksFn, reportUncaughtExceptionFn) {
   var queue;
   var process;
