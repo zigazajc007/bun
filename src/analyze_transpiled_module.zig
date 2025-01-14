@@ -209,8 +209,8 @@ pub const ModuleInfo = struct {
     pub fn addLexicalVariable(self: *ModuleInfo, id: []const u8) !void {
         try self._addRecord(.lexical_variable, &.{try self.str(id)});
     }
-    pub fn addImportInfoSingle(self: *ModuleInfo, module_name: []const u8, import_name: []const u8, local_name: []const u8, only_used_in_export: bool) !void {
-        try self._addRecord(if (only_used_in_export) .import_info_single_type_script else .import_info_single, &.{ try self.str(module_name), try self.str(import_name), try self.str(local_name) });
+    pub fn addImportInfoSingle(self: *ModuleInfo, module_name: []const u8, import_name: []const u8, local_name: []const u8, only_used_as_type: bool) !void {
+        try self._addRecord(if (only_used_as_type) .import_info_single_type_script else .import_info_single, &.{ try self.str(module_name), try self.str(import_name), try self.str(local_name) });
     }
     pub fn addImportInfoNamespace(self: *ModuleInfo, module_name: []const u8, local_name: []const u8) !void {
         try self._addRecord(.import_info_namespace, &.{ try self.str(module_name), try self.str("*"), try self.str(local_name) });

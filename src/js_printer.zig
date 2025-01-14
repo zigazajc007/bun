@@ -4524,7 +4524,7 @@ fn NewPrinter(
                             if (p.moduleInfo()) |mi| {
                                 const symbol = p.symbols().get(item.name.ref.?).?;
                                 try mi.addVar(local_name, .lexical);
-                                try mi.addImportInfoSingle(import_record_path, item.alias, local_name, symbol.use_count_in_export > 0 and symbol.use_count_estimate <= symbol.use_count_in_export);
+                                try mi.addImportInfoSingle(import_record_path, item.alias, local_name, symbol.use_count_as_type > 0 and symbol.use_count_estimate <= symbol.use_count_as_type);
                             }
                         }
 

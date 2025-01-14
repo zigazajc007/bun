@@ -980,10 +980,13 @@ pub const Symbol = struct {
     /// code. But it should always be non-zero when the symbol is used.
     use_count_estimate: u32 = 0,
 
-    /// The number of times this symbol is used in an `export {...}` statement.
+    /// The number of times this symbol is used where it could be referring to a
+    /// typescript type. Examples:
+    /// - T `export { T }`
+    /// - T in `@Decorate() myField?: T` when using emitDecoratorMetadata
     /// If this symbol came from an import statement, this is used to determine
     /// if an error should be emitted if the import is not found.
-    use_count_in_export: u32 = 0,
+    use_count_as_type: u32 = 0,
 
     /// This is for generating cross-chunk imports and exports for code splitting.
     ///

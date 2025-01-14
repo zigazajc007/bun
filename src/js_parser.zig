@@ -8607,6 +8607,7 @@ fn NewParser_(
                             else => {
                                 if (comptime get_metadata) {
                                     const find_result = p.findSymbol(logger.Loc.Empty, p.lexer.identifier) catch unreachable;
+                                    find_result.ref.getSymbol(&p.symbols).use_count_as_type += 1;
                                     result.* = .{ .m_identifier = find_result.ref };
                                 }
 
@@ -19146,7 +19147,7 @@ fn NewParser_(
                         const name = p.loadNameFromRef(item.name.ref.?);
                         const symbol = try p.findSymbol(item.alias_loc, name);
                         const ref = symbol.ref;
-                        if (is_typescript_enabled) p.symbols.items[ref.innerIndex()].use_count_in_export += 1;
+                        if (is_typescript_enabled) ref.getSymbol(&p.symbols).use_count_as_type += 1;
 
                         if (p.symbols.items[ref.innerIndex()].kind == .unbound) {
                             // Silently strip exports of non-local symbols in TypeScript, since
@@ -21347,6 +21348,7 @@ fn NewParser_(
                 .m_identifier => |ref| {
                     p.recordUsage(ref);
                     if (p.is_import_item.contains(ref)) {
+                        ref.getSymbol(&p.symbols).use_count_as_type += 1; // if this identifier is only used from ``
                         return p.maybeDefinedHelper(p.newExpr(
                             E.ImportIdentifier{
                                 .ref = ref,

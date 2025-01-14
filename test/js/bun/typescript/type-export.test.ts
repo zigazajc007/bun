@@ -392,3 +392,41 @@ describe("export type {Type} from './module'", () => {
     });
   }
 });
+
+test("import only used in decorator (#8439)", () => {
+  const dir = tempDirWithFiles("import-only-used-in-decorator", {
+    ["index.ts"]: /*js*/ `
+      // index.ts
+      import { TestInterface } from "./interface.ts";
+
+      function Decorator(): PropertyDecorator {
+        return () => {};
+      }
+
+      class TestClass {
+        @Decorator()
+        test?: TestInterface;
+      }
+      class OtherClass {
+        other?: TestInterface;
+      }
+
+      export {TestInterface};
+    `,
+    ["interface.ts"]: "export interface TestInterface {};",
+    "tsconfig.json": JSON.stringify({
+      "compilerOptions": {
+        "experimentalDecorators": true,
+        "emitDecoratorMetadata": true,
+      },
+    }),
+  });
+  const result = Bun.spawnSync({
+    cmd: [bunExe(), "index.ts"],
+    cwd: dir,
+    env: bunEnv,
+    stdio: ["inherit", "pipe", "pipe"],
+  });
+  expect(result.stderr?.toString().trim()).toBe("");
+  expect(result.exitCode).toBe(0);
+});
