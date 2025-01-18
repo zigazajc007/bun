@@ -3811,7 +3811,7 @@ pub const NodeFS = struct {
                     .ISDIR,
                     // check if it was actually a directory or not.
                     .EXIST,
-                    => return switch (bun.sys.directoryExistsAt(bun.invalid_fd, path)) {
+                    => return switch (bun.sys.directoryExistsAtOSPath(bun.invalid_fd, path)) {
                         .err => .{ .err = .{
                             .errno = err.errno,
                             .syscall = .mkdir,

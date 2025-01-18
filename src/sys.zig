@@ -2837,7 +2837,52 @@ pub fn faccessat(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
     return JSC.Maybe(bool){ .result = false };
 }
 
-pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
+pub fn directoryExistsAt16(dir: bun.FileDescriptor, subpath: [:0]const u16) JSC.Maybe(bool) {
+    const path_len_bytes: u16 = @truncate(subpath.len * 2);
+    var nt_name = w.UNICODE_STRING{
+        .Length = path_len_bytes,
+        .MaximumLength = path_len_bytes,
+        .Buffer = @constCast(subpath.ptr),
+    };
+    var attr = w.OBJECT_ATTRIBUTES{
+        .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(subpath))
+            null
+        else if (dir == bun.invalid_fd)
+            std.fs.cwd().fd
+        else
+            dir.cast(),
+        .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+        .ObjectName = &nt_name,
+        .SecurityDescriptor = null,
+        .SecurityQualityOfService = null,
+    };
+    var basic_info: w.FILE_BASIC_INFORMATION = undefined;
+    const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
+    if (rc == .OBJECT_NAME_INVALID) {
+        bun.Output.warn("internal error: invalid object name: {}", .{bun.fmt.fmtOSPath(subpath, .{})});
+    }
+    if (JSC.Maybe(bool).errnoSys(rc, .access)) |err| {
+        syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {} {d}", .{ dir, bun.fmt.fmtOSPath(subpath, .{}), err, rc });
+        return err;
+    }
+
+    const is_dir = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
+        basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0 and
+        basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0;
+    syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir, bun.fmt.fmtOSPath(subpath, .{}), @intFromBool(is_dir) });
+
+    return .{ .result = is_dir };
+}
+
+pub fn directoryExistsAtOSPath(dir: anytype, subpath: bun.OSPathSliceZ) JSC.Maybe(bool) {
+    if (comptime Environment.isWindows) {
+        return directoryExistsAt16(bun.toFD(dir), subpath);
+    }
+    return directoryExistsAt(bun.toFD(dir), subpath);
+}
+
+pub fn directoryExistsAt(dir: anytype, subpath: [:0]const u8) JSC.Maybe(bool) {
     const dir_fd = bun.toFD(dir);
     if (comptime Environment.isWindows) {
         const wbuf = bun.WPathBufferPool.get();
@@ -2848,41 +2893,7 @@ pub fn directoryExistsAt(dir: anytype, subpath: anytype) JSC.Maybe(bool) {
             bun.strings.toNTPath(wbuf, subpath);
         bun.path.dangerouslyConvertPathToWindowsInPlace(u16, path);
 
-        const path_len_bytes: u16 = @truncate(path.len * 2);
-        var nt_name = w.UNICODE_STRING{
-            .Length = path_len_bytes,
-            .MaximumLength = path_len_bytes,
-            .Buffer = @constCast(path.ptr),
-        };
-        var attr = w.OBJECT_ATTRIBUTES{
-            .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-            .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(path))
-                null
-            else if (dir_fd == bun.invalid_fd)
-                std.fs.cwd().fd
-            else
-                dir_fd.cast(),
-            .Attributes = 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
-            .ObjectName = &nt_name,
-            .SecurityDescriptor = null,
-            .SecurityQualityOfService = null,
-        };
-        var basic_info: w.FILE_BASIC_INFORMATION = undefined;
-        const rc = kernel32.NtQueryAttributesFile(&attr, &basic_info);
-        if (rc == .OBJECT_NAME_INVALID) {
-            bun.Output.warn("internal error: invalid object name: {}", .{bun.fmt.fmtOSPath(path, .{})});
-        }
-        if (JSC.Maybe(bool).errnoSys(rc, .access)) |err| {
-            syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {} {d}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), err, rc });
-            return err;
-        }
-
-        const is_dir = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
-            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0 and
-            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0;
-        syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_dir) });
-
-        return .{ .result = is_dir };
+        return directoryExistsAt16(dir_fd, path);
     }
 
     // TODO: use statx to query less information. this path is currently broken
