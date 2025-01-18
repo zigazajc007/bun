@@ -8,7 +8,7 @@ test("fs.mkdir recursive should not error on existing", async () => {
   const testDir = tmpdirSync();
 
   const dir1 = join(testDir, "test123");
-  expect(mkdirSync(dir1, { recursive: true })).toEndWith(dir1);
+  expect(mkdirSync(dir1, { recursive: true })).toBe(dir1);
   expect(mkdirSync(dir1, { recursive: true })).toBeUndefined();
 
   const dir2 = join(testDir, "test456");
@@ -17,7 +17,7 @@ test("fs.mkdir recursive should not error on existing", async () => {
 
   // nested
   const dir3 = join(testDir, "test789", "nested");
-  expect(mkdirSync(dir3, { recursive: true })).toEndWith(join(testDir, "test789"));
+  expect(mkdirSync(dir3, { recursive: true })).toBe(join(testDir, "test789"));
   expect(mkdirSync(dir3, { recursive: true })).toBeUndefined();
 
   // file

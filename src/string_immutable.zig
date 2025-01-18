@@ -1969,6 +1969,16 @@ pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]u16 {
     return wbuf[0 .. utf16.len + bun.windows.nt_object_prefix.len :0];
 }
 
+pub fn withoutNTPrefix(utf16: []const u16) []const u16 {
+    if (hasPrefixComptimeUTF16(utf16, &bun.windows.nt_unc_object_prefix_u8)) {
+        return utf16[bun.windows.nt_unc_object_prefix.len..];
+    }
+    if (hasPrefixComptimeUTF16(utf16, &bun.windows.nt_object_prefix_u8)) {
+        return utf16[bun.windows.nt_object_prefix.len..];
+    }
+    return utf16;
+}
+
 pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]u16 {
     if (hasPrefixComptimeType(u16, utf16, bun.windows.nt_object_prefix)) {
         @memcpy(wbuf[0..utf16.len], utf16);
