@@ -1916,6 +1916,40 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8).len + prefix.len :0];
 }
 
+pub fn toNTPath16(wbuf: []u16, utf16: []const u16) [:0]u16 {
+    if (!std.fs.path.isAbsoluteWindowsWTF16(utf16)) {
+        @memcpy(wbuf[0..utf16.len], utf16);
+        wbuf[utf16.len] = 0;
+        return wbuf[0..utf16.len :0];
+    }
+
+    if (hasPrefixComptimeType(u16, utf16, bun.windows.nt_unc_object_prefix)) {
+        @memcpy(wbuf[0..utf16.len], utf16);
+        wbuf[utf16.len] = 0;
+        return wbuf[0..utf16.len :0];
+    }
+
+    if (hasPrefixComptimeType(u16, utf16, bun.windows.nt_object_prefix)) {
+        @memcpy(wbuf[0..utf16.len], utf16);
+        wbuf[utf16.len] = 0;
+        return wbuf[0..utf16.len :0];
+    }
+
+    if (strings.hasPrefixComptimeType(u16, utf16, comptime w("\\\\"))) {
+        const prefix = bun.windows.nt_unc_object_prefix;
+        wbuf[0..prefix.len].* = prefix;
+        @memcpy(wbuf[prefix.len..][0..utf16.len], utf16);
+        wbuf[utf16.len + prefix.len] = 0;
+        return wbuf[0 .. utf16.len + prefix.len :0];
+    }
+
+    const prefix = bun.windows.nt_object_prefix;
+    wbuf[0..prefix.len].* = prefix;
+    @memcpy(wbuf[prefix.len..][0..utf16.len], utf16);
+    wbuf[utf16.len + prefix.len] = 0;
+    return wbuf[0 .. utf16.len + prefix.len :0];
+}
+
 pub fn toNTMaxPath(buf: []u8, utf8: []const u8) [:0]const u8 {
     if (!std.fs.path.isAbsoluteWindows(utf8) or utf8.len <= 260) {
         @memcpy(buf[0..utf8.len], utf8);

@@ -2878,7 +2878,10 @@ pub fn directoryExistsAt16(dir: bun.FileDescriptor, subpath: [:0]const u16) JSC.
 
 pub fn directoryExistsAtOSPath(dir: anytype, subpath: bun.OSPathSliceZ) JSC.Maybe(bool) {
     if (comptime Environment.isWindows) {
-        return directoryExistsAt16(bun.toFD(dir), subpath);
+        const wbuf = bun.WPathBufferPool.get();
+        defer bun.WPathBufferPool.put(wbuf);
+        const path = bun.strings.toNTPath16(wbuf, subpath);
+        return directoryExistsAt16(bun.toFD(dir), path);
     }
     return directoryExistsAt(bun.toFD(dir), subpath);
 }
@@ -2888,11 +2891,7 @@ pub fn directoryExistsAt(dir: anytype, subpath: [:0]const u8) JSC.Maybe(bool) {
     if (comptime Environment.isWindows) {
         const wbuf = bun.WPathBufferPool.get();
         defer bun.WPathBufferPool.put(wbuf);
-        const path = if (std.meta.Child(@TypeOf(subpath)) == u16)
-            bun.strings.addNTPathPrefixIfNeeded(wbuf, subpath)
-        else
-            bun.strings.toNTPath(wbuf, subpath);
-        bun.path.dangerouslyConvertPathToWindowsInPlace(u16, path);
+        const path = bun.strings.toNTPath(wbuf, subpath);
 
         return directoryExistsAt16(dir_fd, path);
     }
