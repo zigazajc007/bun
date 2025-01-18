@@ -1969,14 +1969,18 @@ pub fn addNTPathPrefix(wbuf: []u16, utf16: []const u16) [:0]u16 {
     return wbuf[0 .. utf16.len + bun.windows.nt_object_prefix.len :0];
 }
 
-pub fn withoutNTPrefix(utf16: []const u16) []const u16 {
-    if (hasPrefixComptimeUTF16(utf16, &bun.windows.nt_unc_object_prefix_u8)) {
-        return utf16[bun.windows.nt_unc_object_prefix.len..];
+pub fn withoutNTPrefixOSPath(path: bun.OSPathSlice) bun.OSPathSlice {
+    if (!comptime Environment.isWindows) {
+        // noop if not windows
+        return path;
     }
-    if (hasPrefixComptimeUTF16(utf16, &bun.windows.nt_object_prefix_u8)) {
-        return utf16[bun.windows.nt_object_prefix.len..];
+    if (hasPrefixComptimeUTF16(path, &bun.windows.nt_unc_object_prefix_u8)) {
+        return path[bun.windows.nt_unc_object_prefix.len..];
     }
-    return utf16;
+    if (hasPrefixComptimeUTF16(path, &bun.windows.nt_object_prefix_u8)) {
+        return path[bun.windows.nt_object_prefix.len..];
+    }
+    return path;
 }
 
 pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]u16 {

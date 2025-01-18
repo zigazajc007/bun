@@ -3842,7 +3842,7 @@ pub const NodeFS = struct {
                     return .{ .result = .{ .none = {} } };
                 }
                 return .{
-                    .result = .{ .string = bun.String.createFromOSPath(strings.withoutNTPrefix(path)) },
+                    .result = .{ .string = bun.String.createFromOSPath(strings.withoutNTPrefixOSPath(path)) },
                 };
             },
         }
@@ -3941,7 +3941,7 @@ pub const NodeFS = struct {
             return .{ .result = .{ .none = {} } };
         }
         return .{
-            .result = .{ .string = bun.String.createFromOSPath(strings.withoutNTPrefix(working_mem[0..first_match])) },
+            .result = .{ .string = bun.String.createFromOSPath(strings.withoutNTPrefixOSPath(working_mem[0..first_match])) },
         };
     }
 
